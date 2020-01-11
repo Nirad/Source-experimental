@@ -15,8 +15,9 @@ void CChar::Stat_AddMod( STAT_TYPE i, int iVal )
 	ASSERT(i >= 0 && i < STAT_QTY);
     if (iVal == 0)
         return;
-
-    Stat_SetMod(i, Stat_GetMod(i) + iVal);
+	int mod = Stat_GetMod(i);
+    Stat_SetMod(i, mod + iVal);
+	Stat_SetMaxMod(i, mod + iVal);
 }
 
 void CChar::Stat_SetMod( STAT_TYPE i, int iVal )
