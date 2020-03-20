@@ -19,7 +19,7 @@
 - Fixed: Protection spell not working correctly if COMBAT_ELEMENTAL_ENGINE combat flag is disabled.
 
 
----- X1 (Milestone 1 opened)
+---- X1 (Milestone 1 opened) ------------------------------------------------------------------------------------
 
 14-05-2016, XuN
 - Fixed: Pets not gaining Karma (it can be blocked through @KarmaChange trigger, no reason to stop it from the source).
@@ -577,7 +577,7 @@ Note: More needs to be switched over and I am trying to get this and the Base Pa
 (Source)
 Added the basics of an ECS: CEntity and CComponent so we can split into modules (components) the core of the current big classes (CObjBase, CItem, CChar).
 
- - CEntity act as a wrapper for CObjBase (ATM) storing a list of CComponent* inside and redirecting some basic code to all of them (r_Write, r_WriteVal, r_Load, r_LoadVal, r_Verb and r_GetRef) and provides also a GetComponent(COMP_TYPE) for external interaction.
+ - CEntity act as a wrapper for CObjBase (at the moment) storing a list of CComponent* inside and redirecting some basic code to all of them (r_Write, r_WriteVal, r_Load, r_LoadVal, r_Verb and r_GetRef) and provides also a GetComponent(COMP_TYPE) for external interaction.
  - CComponent acts as a wrapper for each module of code and, as abstract, class requires the above functions to be on them for overriding (these must return true if something was executed on them, so CEntity will stop to try them on other CComponents or false if not so the loop continues). For items these components must be added on CItem::CreateBase, eg:
          case IT_SPAWN_CHAMPION:
         {
@@ -2075,3 +2075,72 @@ Default levels explanation:
 When a spawned npc is killed, AddSpawn is being called to spawn the next one.
 	-When all npcs are alredy spawned then AddSpawn checks for DeathCount > SpawnsMax, so the boss will only be generated when all the other spawns are killed.
 Must have event, even if it's empty, since it's applied by the source to generated objects: [events e_spawn_champion]
+
+03-01-2020, Drk84
+- Fixed: Bandage resurrection did not work when targetting a corpse or a ghost.
+		 For resurrecting when targetting a corpse the following conditions must be satisfied:
+			1)The ghost must be in line of sight of its corpse.
+			2)The ghost must be within 2 tiles of its corpse.
+			3)The ghost must be visible.
+	You can also resurrect a Bonded pet by targetting their ghost.
+- Changed: Focus skill behaviour
+			1)It now uses the Skill_UseQuick method, that means it will fires the SkillUseQuick/UseQuick triggers, the chance to succeed is around 50%.
+			2)A small fix, Focus skill was used when Hitpoints where regenerating, now it is used only when regenerating Mana and Stamina.
+			3)Focus skill will not be used if the character  Mana or Stamina are already at their maximum value, so NPCS should not spam the Focus skill anymore I think.
+		    4)You can read/set the amount of mana/stamina gained by the Focus skill by using local.FocusGain in the @RegenStat trigger.
+			  Default value for mana gain is Focus / 20 while for stamina is Focus / 10.
+		   Remember that you need FEATURE_AOS_UPDATE_B ini flag set for enabling the default Focus behaviour.
+		   For disabling the Focus skill you can set SKF_SCRIPTED in the Focus SKILLDEF block or by adding a return 0 in the @UseQuick trigger.
+- Updated SphereCrypt.ini.
+
+19-01-2020, Nolok
+- Fixed: Valid mounts being reported by the garbage collection (Issue #350).
+- Fixed: Warning issued when a keyring (which can act also as a classic container) had legit TDATA2 (gump ID) == 0 (Issue #352).
+
+23-01-2020, Drk84
+- Added: New ini flag DisplayArmorAsPercent.
+         When enabled, display, in the tooltip, the Armor of the item as a percentage of its full armor value, the percentage is based upon the body parts the item covers. 
+         Remember that the displayed value is just for "cosmetical" purpose and, by default, is not used when calculating combat damage, the full AR is the one used.
+		 In some cases, the Armor value displayed in the tooltip will not match with the sum of the AR of each piece of armor displayed in the status gump, this happens when an armor item cover location
+		 overlaps with another armor item cover location that as an higher value.
+		 Quick summary of layer body coverage:
+		  Helm: 15% of AR from head.
+		  Collar: 7% of AR from neck.
+		  Shirt/Chest/Tunic: 35% of AR from chest.
+		  Robe: A robe cover multiple position, 35% of AR from chest, 22% of AR from legs and 14% of AR from arms.
+		  Cape/Arms: 14% from arms.
+		  Pants/Skirt/Half-Apron/Legs: 22% of AR from legs.
+		  Gloves: 7% of AR from hands.
+		  Shield: 7% of AR from shield, if CombatParryEra has the 080 flag set it uses the 100% of AR  from the shield value.
+		 Only works when COMBAT_ELEMENTAL_ENGINE is disabled and FEATURES_AOS_UPDATE_B is enabled. (Issue #241)
+- Added: Missing layer LAYER_SPELL_Enchant.
+- Fixed: Loss of reagents and mana when a summoning spell fail because Maxfollower property was reached.
+		 Note: You will still lose reagents and mana if ManaLossOnFail and ReagentLossOnFail are enabled in the ini. (Issue #351)
+-Updated SphereCrypt.ini.
+
+25-01-2020, Nolok
+- Fixed: Invalid keywords in the [ADVANCE] block were likely to cause memory corruption.
+- Updated: SQlite to version 3.31.0.
+
+05-02-2020, Drk84
+- Added: New ini flag NPCCanFizzleOnHit, when enabled, a NPC can fizzle a spell when hit during combat. (Issue #241)
+- Added: TAG.NPCNoCastTill behaviour, this tag will not allow a NPC to cast a spell if tag.NPCNoCastTill > SERV.Time.
+		 Example:
+		  ON=@SpellCast
+		  tag.NPCNoCastTill = <eval <serv.time> + <argn3> + 50>
+		 In this case, the next spell will be casted after 5 seconds, ARGN3 is the casting speed of the spell, we add it because the spell will take place
+		 after ARGN3 seconds. If you are using PRECAST you probably don't need to add ARGN3. (Issue #241)
+
+01-03-2020, Nolok
+- Fixed: Auto-fixing figurines always treated them as mount items, finding fake errors (Issue #367).
+- Fixed: FORINSTANCES not parsing correctly the argument.
+
+04-03-2020, Drk84
+- [Port from Source, 10-09-2019, Coruja] Added: Missing context menu option "Rename" when player click on a owned pet. (Issue #368)
+- Fixed: Parrying skill increase when weapon / shield wielded does not match with CombatParryEra setting. (Issue #365)
+- Updated SphereCrypt.ini.
+
+15-03-2020, Nolok
+- Fixed: RANGE property broke when overridden.
+- Changed: Improved Map Block Cache, allowing a much faster access to map data and improving the speed of walking and LoS checks.
+- Fixed: Items not going to "sleep" when put in containers different than t_container and t_container_locked.

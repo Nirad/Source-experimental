@@ -125,11 +125,11 @@ CObjBase::~CObjBase()
     }
 
     {
-        std::shared_lock<std::shared_mutex> lock_su(g_World.m_ObjStatusUpdates.THREAD_CMUTEX);
-        g_World.m_ObjStatusUpdates.erase(this);
+        std::shared_lock<std::shared_mutex> lock_su(g_World._Ticker.m_ObjStatusUpdates.THREAD_CMUTEX);
+        g_World._Ticker.m_ObjStatusUpdates.erase(this);
     }
 
-    g_World.m_TimedFunctions.Erase( GetUID() );
+    g_World._Ticker.m_TimedFunctions.Erase( GetUID() );
 
 	FreePropertyList();
 
@@ -550,7 +550,7 @@ void CObjBase::Emote2(lpctstr pText, lpctstr pText1, CClient * pClientExclude, b
 
 // Speak to all clients in the area.
 // ASCII packet
-void CObjBase::Speak( lpctstr pText, HUE_TYPE wHue, TALKMODE_TYPE mode, FONT_TYPE font )
+void CObjBase::Speak( lpctstr pText, HUE_TYPE wHue, TALKMODE_TYPE mode, FONT_TYPE font ) const
 {
 	ADDTOCALLSTACK_INTENSIVE("CObjBase::Speak");
 	g_World.Speak( this, pText, wHue, mode, font );
@@ -558,7 +558,7 @@ void CObjBase::Speak( lpctstr pText, HUE_TYPE wHue, TALKMODE_TYPE mode, FONT_TYP
 
 // Speak to all clients in the area.
 // Unicode packet
-void CObjBase::SpeakUTF8( lpctstr pText, HUE_TYPE wHue, TALKMODE_TYPE mode, FONT_TYPE font, CLanguageID lang )
+void CObjBase::SpeakUTF8( lpctstr pText, HUE_TYPE wHue, TALKMODE_TYPE mode, FONT_TYPE font, CLanguageID lang ) const
 {
 	ADDTOCALLSTACK_INTENSIVE("CObjBase::SpeakUTF8");
 	// convert UTF8 to UNICODE.
@@ -570,7 +570,7 @@ void CObjBase::SpeakUTF8( lpctstr pText, HUE_TYPE wHue, TALKMODE_TYPE mode, FONT
 // Speak to all clients in the area.
 // Unicode packet
 // Difference with SpeakUTF8: this method accepts as text input an nword, which is unicode if sphere is compiled with UNICODE macro)
-void CObjBase::SpeakUTF8Ex( const nword * pText, HUE_TYPE wHue, TALKMODE_TYPE mode, FONT_TYPE font, CLanguageID lang )
+void CObjBase::SpeakUTF8Ex( const nword * pText, HUE_TYPE wHue, TALKMODE_TYPE mode, FONT_TYPE font, CLanguageID lang ) const
 {
 	ADDTOCALLSTACK_INTENSIVE("CObjBase::SpeakUTF8Ex");
 	g_World.SpeakUNICODE( this, pText, wHue, mode, font, lang );
@@ -1305,7 +1305,7 @@ bool CObjBase::r_WriteVal( lpctstr ptcKey, CSString &sVal, CTextConsole * pSrc, 
 					return false;
 				ptcKey += 9;
 				//sVal.FormatVal( (g_World.m_TimedFunctions.IsTimer(GetUID(),ptcKey)) ? 1 : 0 );
-				sVal.FormatVal( g_World.m_TimedFunctions.IsTimer(GetUID(),ptcKey) );
+				sVal.FormatVal( g_World._Ticker.m_TimedFunctions.IsTimer(GetUID(),ptcKey) );
                 break;
 			}
 			break;
@@ -1403,6 +1403,7 @@ bool CObjBase::r_WriteVal( lpctstr ptcKey, CSString &sVal, CTextConsole * pSrc, 
 		case OC_UID:
 			if ( ptcKey[3] == '.' )
 				return CScriptObj::r_WriteVal( ptcKey, sVal, pSrc );
+			FALLTHROUGH;
 		case OC_SERIAL:
 			sVal.FormatHex( GetUID() );
 			break;
@@ -2396,11 +2397,11 @@ bool CObjBase::r_Verb( CScript & s, CTextConsole * pSrc ) // Execute command fro
 				EXC_SET_BLOCK("TIMERF");
 				if ( !strnicmp( s.GetArgStr(), "CLEAR", 5 ) )
 				{
-					g_World.m_TimedFunctions.Erase(GetUID());
+					g_World._Ticker.m_TimedFunctions.Erase(GetUID());
 				}
 				else if ( !strnicmp( s.GetArgStr(), "STOP", 4 ) )
 				{
-					g_World.m_TimedFunctions.Stop(GetUID(),s.GetArgStr()+5);
+					g_World._Ticker.m_TimedFunctions.Stop(GetUID(),s.GetArgStr()+5);
 				}
 				else
 				{
@@ -2421,7 +2422,7 @@ bool CObjBase::r_Verb( CScript & s, CTextConsole * pSrc ) // Execute command fro
 						}
 						else
 						{
-							g_World.m_TimedFunctions.Add(GetUID(), el, p);
+							g_World._Ticker.m_TimedFunctions.Add(GetUID(), el, p);
 						}
 					}
 				}
@@ -2814,8 +2815,8 @@ void CObjBase::UpdatePropertyFlag()
     // Items equipped, inside containers or with timer expired doesn't receive ticks and need to be added to a list of items to be processed separately
     if (!IsTopLevel() || IsTimerExpired())
     {
-        std::shared_lock<std::shared_mutex> lock_su(g_World.m_ObjStatusUpdates.THREAD_CMUTEX);
-        g_World.m_ObjStatusUpdates.emplace(this);
+        std::shared_lock<std::shared_mutex> lock_su(g_World._Ticker.m_ObjStatusUpdates.THREAD_CMUTEX);
+        g_World._Ticker.m_ObjStatusUpdates.emplace(this);
     }
 }
 
@@ -3202,11 +3203,11 @@ void CObjBase::Delete(bool fForce)
     CTimedObject::Delete();
 
     {
-        std::shared_lock<std::shared_mutex> lock_su(g_World.m_ObjStatusUpdates.THREAD_CMUTEX);
-        g_World.m_ObjStatusUpdates.erase(this);
+        std::shared_lock<std::shared_mutex> lock_su(g_World._Ticker.m_ObjStatusUpdates.THREAD_CMUTEX);
+        g_World._Ticker.m_ObjStatusUpdates.erase(this);
     }
 
-    g_World.m_TimedFunctions.Erase( GetUID() );
+    g_World._Ticker.m_TimedFunctions.Erase( GetUID() );
     g_World.m_ObjDelete.InsertHead(this);
 }
 

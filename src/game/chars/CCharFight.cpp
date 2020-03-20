@@ -127,7 +127,7 @@ bool CChar::CheckCrimeSeen( SKILL_TYPE SkillToSee, CChar * pCharMark, const CObj
 			if (IsTrigUsed(TRIGGER_SEESNOOP))
 			{
 				CScriptTriggerArgs Args(pAction);
-				Args.m_iN1 = (SkillToSee != SKILL_NONE) ? SkillToSee : pCharMark->Skill_GetActive();
+				Args.m_iN1 = SkillToSee;
 				Args.m_iN2 = pItem ? (dword)pItem->GetUID() : 0;    // here i can modify pItem via scripts, so it isn't really const
 				Args.m_pO1 = pCharMark;
 				TRIGRET_TYPE iRet = pChar->OnTrigger(CTRIG_SeeSnoop, this, &Args);
@@ -537,6 +537,52 @@ int CChar::CalcArmorDefense() const
 	return maximum(( iDefenseTotal / 100 ) + m_ModAr, 0);
 }
 
+ int CChar::CalcPercentArmorDefense(LAYER_TYPE layer) //static
+{
+	 ADDTOCALLSTACK("CChar::CalcPercentArmorDefense");
+	 int iPercentArmorDefence = 0;
+	 switch (layer)
+	 {
+	 case LAYER_HELM:	//15% from head location.
+		 iPercentArmorDefence = sm_ArmorLayers[0].m_iCoverage;
+		 break;
+	 case LAYER_COLLAR: //7% from neck location.
+		 iPercentArmorDefence = sm_ArmorLayers[1].m_iCoverage;
+		 break;
+	 case LAYER_SHIRT: //LAYER_SHIRT, LAYER_CHEST and LAYER_TUNIC get the 35% of AR  from chest location.
+	 case LAYER_CHEST:
+	 case LAYER_TUNIC: 
+		 iPercentArmorDefence = sm_ArmorLayers[3].m_iCoverage;
+		 break;
+	 case LAYER_ROBE:	//35% from chest, 22% from legs and 14% from arms locations.
+		 iPercentArmorDefence = sm_ArmorLayers[3].m_iCoverage + sm_ArmorLayers[4].m_iCoverage + sm_ArmorLayers[6].m_iCoverage;
+		 break;
+	 case LAYER_CAPE: //Both get 14% from arms location.
+	 case LAYER_ARMS:
+		 iPercentArmorDefence = sm_ArmorLayers[4].m_iCoverage;
+		 break;
+	 case LAYER_GLOVES: //Gloves get 7% from hands location.
+		 iPercentArmorDefence = sm_ArmorLayers[5].m_iCoverage;
+		 break;
+	 case LAYER_PANTS: //LAYER_PANTS, LAYER_SKIRT, LAYER_HALF_APRON and LAYER_LEGS get a 22% of AR from legs location.
+	 case LAYER_SKIRT:
+	 case LAYER_HALF_APRON:
+	 case LAYER_LEGS:
+		 iPercentArmorDefence = sm_ArmorLayers[6].m_iCoverage;
+		 break;
+	 case LAYER_HAND2:	//By default Shields get a 7% armor coverage, if PARRYERA_ARSCALING is enabled they get a 100% armor coverage.
+		 iPercentArmorDefence = sm_ArmorLayers[5].m_iCoverage;
+		 if (g_Cfg.m_iCombatParryingEra & PARRYERA_ARSCALING)
+		 {
+			 iPercentArmorDefence = sm_ArmorLayers[8].m_iCoverage;
+		 }
+		 break;
+	 default:	//Back and Feet location provide no protections (0%).
+		 break;
+	 }
+	 return iPercentArmorDefence;
+}
+
 // Someone hit us.
 // iDmg already defined, here we just apply armor related calculations
 //
@@ -770,8 +816,8 @@ effect_bounce:
         }
     }
 
-	// Disturb magic spells (only players can be disturbed)
-	if ( m_pPlayer && (pSrc != this) && !(uType & DAMAGE_NODISTURB) && g_Cfg.IsSkillFlag(Skill_GetActive(), SKF_MAGIC) )
+	// Disturb magic spells (only players can be disturbed if NpCCanFizzleOnHit is false in sphere.ini)
+	if ( (m_pPlayer || g_Cfg.m_fNPCCanFizzleOnHit) && (pSrc != this) && !(uType & DAMAGE_NODISTURB) && g_Cfg.IsSkillFlag(Skill_GetActive(), SKF_MAGIC) )
 	{
 		// Check if my spell can be interrupted
 		int iDisturbChance = 0;
@@ -891,21 +937,21 @@ byte CChar::GetRangeL() const
 {
     if (_iRange == 0)
         return Char_GetDef()->GetRangeL();
-    return (byte)(_iRange & 0xff);
+    return (byte)(RANGE_GET_LO(_iRange));
 }
 
 byte CChar::GetRangeH() const
 {
     if (_iRange == 0)
         return Char_GetDef()->GetRangeH();
-    return (byte)((_iRange >> 8) & 0xff);
+    return (byte)(RANGE_GET_HI(_iRange));
 }
 
 // What sort of weapon am i using?
 SKILL_TYPE CChar::Fight_GetWeaponSkill() const
 {
 	ADDTOCALLSTACK_INTENSIVE("CChar::Fight_GetWeaponSkill");
-	CItem * pWeapon = m_uidWeapon.ItemFind();
+	const CItem * pWeapon = m_uidWeapon.ItemFind();
 	if ( pWeapon == nullptr )
 		return SKILL_WRESTLING;
 	return pWeapon->Weapon_GetSkill();
@@ -917,7 +963,7 @@ DAMAGE_TYPE CChar::Fight_GetWeaponDamType(const CItem* pWeapon) const
     DAMAGE_TYPE iDmgType = DAMAGE_HIT_BLUNT;
     if ( pWeapon )
     {
-        CVarDefCont *pDamTypeOverride = pWeapon->GetKey("OVERRIDE.DAMAGETYPE", true);
+        const CVarDefCont *pDamTypeOverride = pWeapon->GetKey("OVERRIDE.DAMAGETYPE", true);
         if ( pDamTypeOverride )
         {
             iDmgType = (DAMAGE_TYPE)(pDamTypeOverride->GetValNum());
@@ -952,7 +998,7 @@ bool CChar::Fight_IsActive() const
 	if ( ! IsStatFlag(STATF_WAR))
 		return false;
 
-	SKILL_TYPE iSkillActive = Skill_GetActive();
+	const SKILL_TYPE iSkillActive = Skill_GetActive();
 	switch ( iSkillActive )
 	{
 		case SKILL_ARCHERY:
@@ -1237,8 +1283,10 @@ bool CChar::Fight_Attack( CChar *pCharTarg, bool fToldByMaster )
 
     pCharTarg->Memory_AddObjTypes(this, MEMORY_IRRITATEDBY);
     // Looking for MEMORY_AGGREIVED|MEMORY_HARMEDBY because in this case it won't be a crime, but most importantly to avoid infinite recursion
-    if (g_Cfg.m_fAttackingIsACrime && (pCharTarg->Noto_GetFlag(this) == NOTO_GOOD) && !pCharTarg->Memory_FindObjTypes(this, MEMORY_AGGREIVED|MEMORY_HARMEDBY))
-        CheckCrimeSeen(SKILL_NONE, pTarget, nullptr, nullptr);
+	if (g_Cfg.m_fAttackingIsACrime && (pCharTarg->Noto_GetFlag(this) == NOTO_GOOD) && !pCharTarg->Memory_FindObjTypes(this, MEMORY_AGGREIVED | MEMORY_HARMEDBY))
+	{
+		CheckCrimeSeen(SKILL_NONE, pTarget, nullptr, nullptr);
+	}
 
     if (m_pNPC && !fToldByMaster)		// call FindBestTarget when this CChar is a NPC and was not commanded to attack, otherwise it attack directly
     {
@@ -1401,9 +1449,8 @@ int CChar::Fight_CalcRange( CItem * pWeapon ) const
 {
 	ADDTOCALLSTACK("CChar::Fight_CalcRange");
 
-	int iCharRange = GetRangeH();
-	int iWeaponRange = pWeapon ? pWeapon->GetRangeH() : 0;
-
+	const int iCharRange = GetRangeH();
+	const int iWeaponRange = pWeapon ? pWeapon->GetRangeH() : 0;
 	return ( maximum(iCharRange , iWeaponRange) );
 }
 
@@ -1676,6 +1723,9 @@ WAR_SWING_TYPE CChar::Fight_Hit( CChar * pCharTarg )
     // Do i have to wait for the recoil time?
     if (m_atFight.m_iWarSwingState == WAR_SWING_EQUIPPING)
     {
+		// calculate the chance at every hit
+		m_Act_Difficulty = g_Cfg.Calc_CombatChanceToHit(this, m_Fight_Targ_UID.CharFind());
+
         m_atFight.m_iSwingAnimation = (int16)GenerateAnimate(ANIM_ATTACK_WEAPON);
 
         if ( IsTrigUsed(TRIGGER_HITTRY) )
@@ -2060,7 +2110,11 @@ bool CChar::Fight_Parry(CItem * &pItemParry)
     const bool fCanTwoHanded = g_Cfg.m_iCombatParryingEra & PARRYERA_TWOHANDBLOCK;
 
     const int iParrying = Skill_GetBase(SKILL_PARRYING);
-    int iParryChance = 0;   // 0-100 difficulty! without the decimal!
+	/*
+	While the difficulty range is 0-100 (without decimal) we initialize iParryChance to -1 for avoiding the player
+	to gain parrying skill when his combination of weapon/shield does not match the values set in the CombatParryingEra  in the sphere.ini.
+	*/
+    int iParryChance = -1;
     if (g_Cfg.m_iCombatParryingEra & PARRYERA_SEFORMULA)   // Samurai Empire formula
     {
         const int iBushido = Skill_GetBase(SKILL_BUSHIDO);
@@ -2129,8 +2183,12 @@ bool CChar::Fight_Parry(CItem * &pItemParry)
         if ((iParryChance > 0) && (iParrying >= 1000))
             iParryChance += 5;
     }
-
-    if (iParryChance <= 0)
+	/* 
+	Had to replace <= with < otherwise we will never be able to increase the parrying  skill if the Parrying skill is too low.
+	For example, without a shield and using the legacy formula we will not be able to get a gain in the skill if the character
+	Parrying skill is less than 8.0.
+	*/
+    if (iParryChance < 0)
         return false;
 	
     int iDex = Stat_GetAdjusted(STAT_DEX);

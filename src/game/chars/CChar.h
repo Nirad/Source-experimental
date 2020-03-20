@@ -449,7 +449,8 @@ private:
 
 public:
 	CChar* GetNext() const;
-	CObjBaseTemplate * GetTopLevelObj() const;
+	const CObjBaseTemplate * GetTopLevelObj() const override;
+	CObjBaseTemplate* GetTopLevelObj() override;
 
 	bool IsSwimming() const;
 
@@ -930,7 +931,7 @@ private:
 	int Skill_Act_Training( SKTRIG_TYPE stage );
 
 	void Spell_Dispel( int iskilllevel );
-	CChar * Spell_Summon( CREID_TYPE id, CPointMap ptTarg );
+	CChar * Spell_Summon_Place( CChar * pChar, CPointMap ptTarg );
 	bool Spell_Recall(CItem * pRune, bool fGate);
     CItem * Spell_Effect_Create( SPELL_TYPE spell, LAYER_TYPE layer, int iEffect, int64 iDurationInTenths, CObjBase * pSrc = nullptr, bool bEquip = true );
 	SPELL_TYPE Spell_GetIndex(SKILL_TYPE skill = SKILL_NONE);	//gets first spell for the magic skill given.
@@ -957,6 +958,7 @@ public:
 	bool Spell_CastDone();
 	bool OnSpellEffect( SPELL_TYPE spell, CChar * pCharSrc, int iSkillLevel, CItem * pSourceItem, bool fReflecting = false );
 	bool Spell_CanCast( SPELL_TYPE &spellRef, bool fTest, CObjBase * pSrc, bool fFailMsg, bool fCheckAntiMagic = true );
+	CChar * Spell_Summon_Try(SPELL_TYPE spell, CPointMap ptTarg, CREID_TYPE iC1);
 	int64 GetSpellDuration( SPELL_TYPE spell, int iSkillLevel, CChar * pCharSrc = nullptr ); // in tenths of second
 
 	// Memories about objects in the world. -------------------
@@ -1013,7 +1015,7 @@ private:
 	bool Fight_IsActive() const;
 public:
 	int CalcArmorDefense() const;
-	
+	static int CalcPercentArmorDefense(LAYER_TYPE layer);
 	void Memory_Fight_Retreat( CChar * pTarg, CItemMemory * pFight );
 	void Memory_Fight_Start( const CChar * pTarg );
 	bool Memory_Fight_OnTick( CItemMemory * pMemory );
@@ -1048,22 +1050,22 @@ public:
 	bool	Attacker_Add(CChar * pChar, int64 threat = 0);
 	CChar * Attacker_GetLast() const;
 	bool	Attacker_Delete(std::vector<LastAttackers>::iterator &itAttacker, bool bForced = false, ATTACKER_CLEAR_TYPE type = ATTACKER_CLEAR_FORCED);
-	bool	Attacker_Delete(size_t attackerIndex, bool bForced = false, ATTACKER_CLEAR_TYPE type = ATTACKER_CLEAR_FORCED);
+	bool	Attacker_Delete(int attackerIndex, bool bForced = false, ATTACKER_CLEAR_TYPE type = ATTACKER_CLEAR_FORCED);
 	bool	Attacker_Delete(const CChar * pChar, bool bForced = false, ATTACKER_CLEAR_TYPE type = ATTACKER_CLEAR_FORCED);
 	void	Attacker_RemoveChar();
 	void	Attacker_Clear();
 	void	Attacker_CheckTimeout();
-	int64	Attacker_GetDam(size_t attackerIndex) const;
+	int64	Attacker_GetDam(int attackerIndex) const;
 	void	Attacker_SetDam(const CChar * pChar, int64 value);
-	void	Attacker_SetDam(size_t attackerIndex, int64 value);
-	CChar * Attacker_GetUID(size_t attackerIndex) const;
-	int64	Attacker_GetElapsed(size_t attackerIndex) const;
+	void	Attacker_SetDam(int attackerIndex, int64 value);
+	CChar * Attacker_GetUID(int attackerIndex) const;
+	int64	Attacker_GetElapsed(int attackerIndex) const;
 	void	Attacker_SetElapsed(const CChar * pChar, int64 value);
-	void	Attacker_SetElapsed(size_t attackerIndex, int64 value);
-	int64	Attacker_GetThreat(size_t attackerIndex) const;
+	void	Attacker_SetElapsed(int attackerIndex, int64 value);
+	int64	Attacker_GetThreat(int attackerIndex) const;
 	void	Attacker_SetThreat(const CChar * pChar, int64 value);
-	void	Attacker_SetThreat(size_t attackerIndex, int64 value);
-	bool	Attacker_GetIgnore(size_t pChar) const;
+	void	Attacker_SetThreat(int attackerIndex, int64 value);
+	bool	Attacker_GetIgnore(int pChar) const;
 	bool	Attacker_GetIgnore(const CChar * pChar) const;
 	void	Attacker_SetIgnore(size_t pChar, bool fIgnore);
 	void	Attacker_SetIgnore(const CChar * pChar, bool fIgnore);
@@ -1082,6 +1084,7 @@ public:
 	void NPC_CreateTrigger();
 
 	// Mounting and figurines
+	ITEMID_TYPE Horse_GetMountItemID() const;
 	bool Horse_Mount( CChar * pHorse ); // Remove horse char and give player a horse item
 	bool Horse_UnMount(); // Remove horse char and give player a horse item
 

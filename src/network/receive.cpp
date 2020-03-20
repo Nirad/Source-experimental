@@ -101,8 +101,6 @@ bool PacketCreate::onReceive(CNetState* net)
 		*/
 		switch (race_sex_flag)
 		{
-			default:
-				g_Log.Event(LOGL_WARN|LOGM_NOCONTEXT,"PacketCreate: unknown race_sex_flag (% " PRIu8 "), defaulting to 2 (human male).\n", race_sex_flag);
 			case 0x2: case 0x3:
 				rtRace = RACETYPE_HUMAN;
 				break;
@@ -112,6 +110,8 @@ bool PacketCreate::onReceive(CNetState* net)
 			case 0x6: case 0x7:
 				rtRace = RACETYPE_GARGOYLE;
 				break;
+			default:
+				g_Log.Event(LOGL_WARN | LOGM_NOCONTEXT, "PacketCreate: unknown race_sex_flag (% " PRIu8 "), defaulting to 2 (human male).\n", race_sex_flag);
 		}
 	}
 	else
@@ -146,9 +146,9 @@ bool PacketCreate::onReceive(CNetState* net)
 		hue, hairid, hairhue, beardid, beardhue, shirthue, pantshue, ITEMID_NOTHING, startloc, flags);
 }
 
-bool PacketCreate::doCreate(CNetState* net, lpctstr charname, bool bFemale, RACE_TYPE rtRace, short wStr, short wDex, short wInt,
-	PROFESSION_TYPE prProf, SKILL_TYPE skSkill1, ushort uiSkillVal1, SKILL_TYPE skSkill2, ushort uiSkillVal2, SKILL_TYPE skSkill3, ushort uiSkillVal3, SKILL_TYPE skSkill4, ushort uiSkillVal4,
-	HUE_TYPE wSkinHue, ITEMID_TYPE idHair, HUE_TYPE wHairHue, ITEMID_TYPE idBeard, HUE_TYPE wBeardHue, HUE_TYPE wShirtHue, HUE_TYPE wPantsHue, ITEMID_TYPE idFace, int iStartLoc, int iFlags)
+bool PacketCreate::doCreate(CNetState* net, lpctstr charname, bool fFemale, RACE_TYPE rtRace, ushort wStr, ushort wDex, ushort wInt, PROFESSION_TYPE prProf,
+	SKILL_TYPE skSkill1, ushort uiSkillVal1, SKILL_TYPE skSkill2, ushort uiSkillVal2, SKILL_TYPE skSkill3, ushort uiSkillVal3, SKILL_TYPE skSkill4, ushort uiSkillVal4,
+	HUE_TYPE wSkinHue, ITEMID_TYPE idHair, HUE_TYPE wHairHue, ITEMID_TYPE idBeard, HUE_TYPE wBeardHue, HUE_TYPE wShirtHue, HUE_TYPE wPantsHue, ITEMID_TYPE idFace, int iStartLoc, uint uiFlags)
 {
 	ADDTOCALLSTACK("PacketCreate::doCreate");
 
@@ -194,7 +194,7 @@ bool PacketCreate::doCreate(CNetState* net, lpctstr charname, bool bFemale, RACE
 	TRIGRET_TYPE tr = TRIGRET_RET_DEFAULT;
 	CScriptTriggerArgs createArgs;
     // RW
-	createArgs.m_iN1 = iFlags;
+	createArgs.m_iN1 = uiFlags;
 	createArgs.m_iN2 = prProf;
 	createArgs.m_iN3 = rtRace;
     // R
@@ -205,12 +205,12 @@ bool PacketCreate::doCreate(CNetState* net, lpctstr charname, bool bFemale, RACE
     if (tr == TRIGRET_RET_TRUE)
         goto block_creation;
 
-    iFlags = (int)createArgs.m_iN1;
+    //uiFlags = (uint)createArgs.m_iN1;  // unused at this point
     prProf = (PROFESSION_TYPE)createArgs.m_iN2;
     rtRace = (RACE_TYPE)createArgs.m_iN3;
 
 	// Creating the pChar
-	pChar->InitPlayer(client, charname, bFemale, rtRace, wStr, wDex, wInt,
+	pChar->InitPlayer(client, charname, fFemale, rtRace, wStr, wDex, wInt,
 		prProf, skSkill1, uiSkillVal1, skSkill2, uiSkillVal2, skSkill3, uiSkillVal3, skSkill4, uiSkillVal4,
 		wSkinHue, idHair, wHairHue, idBeard, wBeardHue, wShirtHue, wPantsHue, idFace, iStartLoc);
 
@@ -996,7 +996,7 @@ bool PacketBookPageEdit::onReceive(CNetState* net)
 	uint len = 0;
 	tchar* content = Str_GetTemp();
 
-	for (int i = 0; i < pageCount; i++)
+	for (ushort i = 0; i < pageCount; ++i)
 	{
 		// read next page to change with line count
 		page = readInt16();
@@ -1004,7 +1004,7 @@ bool PacketBookPageEdit::onReceive(CNetState* net)
 		if (page < 1 || page > MAX_BOOK_PAGES || lineCount <= 0)
 			continue;
 
-		page--;
+		-- page;
 		len = 0;
 
 		// read each line of the page
@@ -1624,7 +1624,7 @@ bool PacketCreateNew::onReceive(CNetState* net)
 	bool success = doCreate(net, charname, sex > 0, race,
 		strength, dexterity, intelligence, profession,
 		skill1, skillval1, skill2, skillval2, skill3, skillval3, skill4, skillval4,
-		hue, hairid, hairhue, beardid, beardhue, shirthue, shirthue, faceid, startloc, -1);
+		hue, hairid, hairhue, beardid, beardhue, shirthue, shirthue, faceid, startloc, UINT32_MAX);
 	if (!success)
 		return false;
 
@@ -2160,7 +2160,7 @@ bool PacketGumpDialogRet::onReceive(CNetState* net)
 			CChar *viewed = character;
 			if ((button == 1) && (checkCount > 0))
 			{
-				viewed = CUID(readInt32()).CharFind();
+				viewed = CUID::CharFind(readInt32());
 				if (!viewed)
 					viewed = character;
 			}
@@ -2228,12 +2228,6 @@ bool PacketGumpDialogRet::onReceive(CNetState* net)
 
 
 	dword textCount = readInt32();
-    if (checkCount > MAX_DIALOG_CONTROLTYPE_QTY)
-    {
-        g_Log.EventError("%x:PacketGumpDialogRet textentry count too high.\n", net->id());
-        return false;
-    }
-
 	tchar* text = Str_GetTemp();
 	for (uint i = 0; i < textCount; ++i)
 	{
@@ -4572,8 +4566,6 @@ bool PacketCreateHS::onReceive(CNetState* net)
 	*/
 	switch (race_sex_flag)
 	{
-	default:
-		g_Log.Event(LOGL_WARN|LOGM_NOCONTEXT, "Creating new character (client > 7.0.16.0 packet) with unknown race_sex_flag (% " PRIu8 "): defaulting to 2 (human male).\n", race_sex_flag);
 	case 0x2: case 0x3:
 		rtRace = RACETYPE_HUMAN;
 		break;
@@ -4583,6 +4575,8 @@ bool PacketCreateHS::onReceive(CNetState* net)
 	case 0x6: case 0x7:
 		rtRace = RACETYPE_GARGOYLE;
 		break;
+	default:
+		g_Log.Event(LOGL_WARN | LOGM_NOCONTEXT, "Creating new character (client > 7.0.16.0 packet) with unknown race_sex_flag (% " PRIu8 "): defaulting to 2 (human male).\n", race_sex_flag);
 	}
 
 	return doCreate(net, charname, isFemale, rtRace,

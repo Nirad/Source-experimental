@@ -177,7 +177,7 @@ void CChar::Stat_SetVal( STAT_TYPE i, ushort uiVal )
 
     if ((i == STAT_STR) && (uiVal == 0))
     {   // Ensure this char will tick and die
-        g_World.AddCharTicking(this, true, false);
+        g_World._Ticker.AddCharTicking(this, true, false);
     }
 }
 
@@ -199,7 +199,7 @@ void CChar::Stat_AddVal( STAT_TYPE i, int iVal )
 
     if ((i == STAT_STR) && (iVal <= 0))
     {   // Ensure this char will tick and die
-        g_World.AddCharTicking(this, true, false);
+        g_World._Ticker.AddCharTicking(this, true, false);
     }
 }
 
@@ -492,16 +492,19 @@ bool CChar::Stats_Regen()
 
 		int iMod = (int)Stats_GetRegenVal(i);
         ushort uiStatLimit = Stat_GetMaxAdjusted(i);
+		int iFocusGain = 0;
         if (Stat_GetVal(i) <= uiStatLimit)
         {
             if ((i == STAT_STR) && (g_Cfg.m_iRacialFlags & RACIALF_HUMAN_TOUGH) && IsHuman())
                 iMod += 2;		// Humans always have +2 hitpoint regeneration (Tough racial trait)
 
-            if (g_Cfg.m_iFeatureAOS & FEATURE_AOS_UPDATE_B)
+            if (g_Cfg.m_iFeatureAOS & FEATURE_AOS_UPDATE_B 
+				&& (i == STAT_DEX || i == STAT_INT) 
+				&& Stat_GetVal(i) < uiStatLimit)
             {
-                int iGain = Skill_Focus(i);
-                if (iGain > 0)
-                    iMod += minimum(iGain, USHRT_MAX);
+                iFocusGain = Skill_Focus(i);
+				if (iFocusGain < 0)
+					iFocusGain = 0;
             }
         }
         else
@@ -515,6 +518,10 @@ bool CChar::Stats_Regen()
 			Args.m_VarsLocal.SetNum("StatID", i, true);
 			Args.m_VarsLocal.SetNum("Value", iMod, true);
 			Args.m_VarsLocal.SetNum("StatLimit", uiStatLimit, true);
+
+			if (i == STAT_DEX || i == STAT_INT)
+				Args.m_VarsLocal.SetNum("FocusValue", iFocusGain);
+
 			if (i == STAT_FOOD)
 				Args.m_VarsLocal.SetNum("HitsHungerLoss", iHitsHungerLoss);
 
@@ -533,6 +540,13 @@ bool CChar::Stats_Regen()
 				i = STAT_FOOD;
             iMod = (int)(Args.m_VarsLocal.GetKeyNum("Value"));
 			uiStatLimit = (ushort)(Args.m_VarsLocal.GetKeyNum("StatLimit"));
+
+			if (i == STAT_DEX || i == STAT_INT)
+			{
+				iFocusGain = (int)(Args.m_VarsLocal.GetKeyNum("FocusValue"));
+				iMod += iFocusGain;
+			}
+
 			if (i == STAT_FOOD)
 				iHitsHungerLoss = (int)(Args.m_VarsLocal.GetKeyNum("HitsHungerLoss"));
 		}

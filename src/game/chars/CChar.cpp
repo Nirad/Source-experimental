@@ -258,7 +258,7 @@ CChar::CChar( CREID_TYPE baseID ) : CTimedObject(PROFILE_CHARS), CObjBase( false
     m_defense = 0;
 	m_height = 0;
 	m_ModMaxWeight = 0;
-    _iRange = 1 << 8;   // RangeH = 1; RangeL = 0
+    _iRange = RANGE_MAKE(1, 0);   // RangeH = 1; RangeL = 0
 
 	m_StepStealth = 0;
 	m_iVisualRange = UO_MAP_VIEW_SIZE_DEFAULT;
@@ -316,16 +316,17 @@ CChar::~CChar()
 {
     DeletePrepare();    // remove me early so virtuals will work.
 
-    g_World.DelCharTicking(this);
+    g_World._Ticker.DelCharTicking(this);
 
-    if (IsStatFlag( STATF_RIDDEN ))
+    if (IsStatFlag(STATF_RIDDEN))
     {
-        CItem * pItem = Horse_GetValidMountItem();
+        CItem * pItem = Horse_GetMountItem();
         if ( pItem )
         {
             pItem->m_itFigurine.m_UID.InitUID();    // unlink it first.
             pItem->Delete();
         }
+        StatFlag_Clear(STATF_RIDDEN);
     }
 
     if (IsClient())    // this should never happen.
@@ -427,7 +428,7 @@ void CChar::SetDisconnected()
         m_pParty->RemoveMember( GetUID(), GetUID() );
         m_pParty = nullptr;
     }
-    g_World.DelCharTicking(this);
+    g_World._Ticker.DelCharTicking(this);
 
     if ( IsDisconnected() )
         return;
@@ -544,7 +545,7 @@ void CChar::Delete(bool bforce)
 	if (( NotifyDelete() == false ) && !bforce)
 		return;
 
-    g_World.DelCharTicking(this);
+    g_World._Ticker.DelCharTicking(this);
 
 	// Character has been deleted
 	if ( IsClient() )
@@ -565,7 +566,7 @@ void CChar::GoSleep()
     ADDTOCALLSTACK("CChar::GoSleep");
     ASSERT(!IsSleeping());
     
-    g_World.DelCharTicking(this);   // do not insert into the mutex lock, it access back to this char.
+    g_World._Ticker.DelCharTicking(this);   // do not insert into the mutex lock, it access back to this char.
 
     THREAD_UNIQUE_LOCK_SET;
     CTimedObject::GoSleep();
@@ -584,7 +585,7 @@ void CChar::GoAwake()
     THREAD_UNIQUE_LOCK_SET;
 
     CTimedObject::GoAwake();       // Awake it first, otherwise some other things won't work
-    g_World.AddCharTicking(this);
+    g_World._Ticker.AddCharTicking(this);
     SetTimeout(Calc_GetRandVal(1 * MSECS_PER_SEC));  // make it tick randomly in the next sector, so all awaken NPCs get a different tick time.
 
     for (CItem *pItem = GetContentHead(); pItem != nullptr; pItem = pItem->GetNext())
@@ -845,7 +846,7 @@ int CChar::FixWeirdness()
 				iResultCode = 0x1203;
 				return iResultCode;
 			}
-			const CItem * pFigurine = Horse_GetMountItem();
+			const CItem * pFigurine = Horse_GetValidMountItem();
 			if ( pFigurine == nullptr )
 			{
 				iResultCode = 0x1204;
@@ -1138,7 +1139,7 @@ bool CChar::DupeFrom( CChar * pChar, bool fNewbieItems )
 	// End copying items.
 	FixWeight();
 	Update();
-    g_World.AddCharTicking(this);
+    g_World._Ticker.AddCharTicking(this);
 	return true;
 }
 
@@ -2759,7 +2760,14 @@ do_default:
 			sVal.FormatHex( m_Act_Prv_UID.GetObjUID() );
 			break;
 		case CHC_ACTDIFF:
-			sVal.FormatVal( m_Act_Difficulty * 10 );
+			if (m_Act_Difficulty >= 0)
+			{
+				sVal.FormatVal(m_Act_Difficulty * 10);
+			}
+			else
+			{
+				sVal.FormatVal(m_Act_Difficulty);
+			}
 			break;
 		case CHC_ACTARG1:
 			sVal.FormatHex( m_atUnk.m_dwArg1 );
@@ -2967,8 +2975,8 @@ do_default:
         case CHC_RANGE:
         {
             const int iRangeH = GetRangeH(), iRangeL = GetRangeL();
-            if ( iRangeH == 0 )
-                sVal.Format( "%d", iRangeL );
+            if ( iRangeL == 0 )
+                sVal.Format( "%d", iRangeH );
             else
                 sVal.Format( "%d,%d", iRangeH, iRangeL );
             break;
@@ -3210,6 +3218,7 @@ bool CChar::r_LoadVal( CScript & s )
         case CHC_OINT:
         case CHC_INT:
             Stat_SetBase(STAT_INT, s.GetArgUSVal());
+			break;
 		case CHC_MAXFOOD:
 			Stat_SetMax(STAT_FOOD, s.GetArgUSVal());
 			break;
@@ -3255,7 +3264,18 @@ bool CChar::r_LoadVal( CScript & s )
 			m_Act_Prv_UID = s.GetArgVal();
 			break;
 		case CHC_ACTDIFF:
-			m_Act_Difficulty = (s.GetArgVal() / 10);
+			{
+				int iVal = s.GetArgVal();
+				if (iVal < -1)
+				{
+					iVal = -1;
+				}
+				else if (iVal > 0)
+				{
+					iVal /= 10;
+				}
+				m_Act_Difficulty = iVal;
+			}
 			break;
 		case CHC_ACTARG1:
 			m_atUnk.m_dwArg1 = s.GetArgVal();
@@ -3525,21 +3545,7 @@ bool CChar::r_LoadVal( CScript & s )
 			break;
         case CHC_RANGE:
         {
-            int64 piVal[2];
-            tchar *ptcTmp = Str_GetTemp();
-            Str_CopyLimitNull(ptcTmp, s.GetArgStr(), STR_TEMPLENGTH);
-            int iQty = Str_ParseCmds( ptcTmp, piVal, CountOf(piVal));
-            int iRange;
-            if ( iQty > 1 )
-            {
-                iRange = (int)((piVal[1] & 0xff) << 8); // highest byte contains the lowest value
-                iRange |= (int)(piVal[0] & 0xff);       // lowest byte contains the highest value
-            }
-            else
-            {
-                iRange = (int)(piVal[0] << 8);
-            }
-            _iRange = iRange;
+			_iRange = CBaseBaseDef::ConvertRangeStr(s.GetArgStr());
             break;
         }
         case CHC_RANGEH:
@@ -3597,7 +3603,7 @@ bool CChar::r_LoadVal( CScript & s )
             if (!(g_Cfg.m_iFeatureTOL & FEATURE_TOL_VIRTUALGOLD))
             {
                 int newGold = s.GetArgVal();
-                if (newGold <= 0)
+                if (newGold < 0)
                     return false;
 
                 int currentGold = ContentCount(CResourceID(RES_TYPEDEF, IT_GOLD));

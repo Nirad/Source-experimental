@@ -9,7 +9,6 @@
 #include "../resource/CResourceBase.h"
 #include "../components/CCFaction.h"
 #include "../CServerTime.h"
-#include "../CTimedObject.h"
 #include "../CBase.h"
 #include "../CRect.h"
 #include "../CObjBase.h"
@@ -673,14 +672,15 @@ public:
 		return static_cast <CItem*>(CObjBase::GetPrev());
 	}
 
+	const CObjBaseTemplate* GetTopLevelObj() const override;
+	CObjBaseTemplate* GetTopLevelObj() override;
 	CObjBase * GetContainer() const;
-	CObjBaseTemplate * GetTopLevelObj() const;
 	uchar GetContainedGridIndex() const;
 	void SetContainedGridIndex(uchar index);
 
 	void Update( const CClient * pClientExclude = nullptr );		// send this new item to everyone.
 	void Flip();
-	bool LoadSetContainer( CUID uid, LAYER_TYPE layer );
+	bool LoadSetContainer( const CUID& uid, LAYER_TYPE layer );
 
 	void WriteUOX( CScript & s, int index );
 
@@ -696,22 +696,16 @@ public:
 	virtual bool r_Load( CScript & s ) override; // Load an item from script
 	virtual bool r_Verb( CScript & s, CTextConsole * pSrc ) override; // Execute command from script
 
-public:    /**
-    * @fn  bool CObjBase::IsTriggerActive(lpctstr trig);
-    *
+public:
+	/**
     * @brief   Queries if a trigger is active ( m_RunningTrigger ) .
-    *
     * @param   trig    The trig.
-    *
     * @return  true if the trigger is active, false if not.
     */
     bool IsTriggerActive(lpctstr trig) const;
 
     /**
-    * @fn  void CObjBase::SetTriggerActive(lpctstr trig = nullptr);
-    *
     * @brief   Sets trigger active ( m_RunningTrigger ).
-    *
     * @param   trig    The trig.
     */
     void SetTriggerActive(lpctstr trig = nullptr);
