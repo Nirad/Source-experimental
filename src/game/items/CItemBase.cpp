@@ -121,6 +121,28 @@ CItemBase::~CItemBase()
 	// These don't really get destroyed til the server is shut down but keep this around anyhow.
 }
 
+word CItemBase::GetMaxAmount()
+{
+	ADDTOCALLSTACK("CItemBase::GetMaxAmount");
+	if (!IsStackableType())
+		return 0;
+
+	int64 iMax = GetDefNum("MaxAmount");
+	if (iMax)
+		return (word)minimum(iMax, UINT16_MAX);
+	else
+		return (word)minimum(g_Cfg.m_iItemsMaxAmount, UINT16_MAX);
+}
+
+bool CItemBase::SetMaxAmount(word amount)
+{
+	ADDTOCALLSTACK("CItemBase::SetMaxAmount");
+	if (!IsStackableType())
+		return false;
+
+	SetDefNum("MaxAmount", amount, false);
+	return true;
+}
 
 void CItemBase::SetTypeName( lpctstr pszName )
 {
@@ -1114,18 +1136,18 @@ bool CItemBase::r_WriteVal( lpctstr ptcKey, CSString & sVal, CTextConsole * pSrc
 				++ptcKey;
 				if (!strnicmp(ptcKey, "TILES", 5))
 				{
-					sVal.FormatVal(pItemMulti->m_shipSpeed.tiles);
+					sVal.FormatVal(pItemMulti->_shipSpeed.tiles);
 					break;
 				}
 				else if (!strnicmp(ptcKey, "PERIOD", 6))
 				{
-					sVal.FormatVal(pItemMulti->m_shipSpeed.period);
+					sVal.FormatVal(pItemMulti->_shipSpeed.period);
 					break;
 				}
 				return false;
 			}
 
-			sVal.Format("%d,%d", pItemMulti->m_shipSpeed.period, pItemMulti->m_shipSpeed.tiles);
+			sVal.Format("%d,%d", pItemMulti->_shipSpeed.period, pItemMulti->_shipSpeed.tiles);
 		} break;
         case IBC_MULTICOUNT:
         {
@@ -1443,20 +1465,20 @@ bool CItemBase::r_LoadVal( CScript &s )
 				CItemBaseMulti *pItemMulti = dynamic_cast<CItemBaseMulti*>(dynamic_cast<CItemBase*>(this));
 				if (!strnicmp(ptcKey, "TILES", 5))
 				{
-					pItemMulti->m_shipSpeed.tiles = (uchar)(s.GetArgVal());
+					pItemMulti->_shipSpeed.tiles = (uchar)(s.GetArgVal());
 					return true;
 				}
 				else if (!strnicmp(ptcKey, "PERIOD", 6))
 				{
-					pItemMulti->m_shipSpeed.tiles = (uchar)(s.GetArgVal());
+					pItemMulti->_shipSpeed.tiles = (uchar)(s.GetArgVal());
 					return true;
 				}
 				int64 piVal[2];
 				size_t iQty = Str_ParseCmds(s.GetArgStr(), piVal, CountOf(piVal));
 				if (iQty == 2)
 				{
-					pItemMulti->m_shipSpeed.period = (uchar)(piVal[0]);
-					pItemMulti->m_shipSpeed.tiles = (uchar)(piVal[1]);
+					pItemMulti->_shipSpeed.period = (uchar)(piVal[0]);
+					pItemMulti->_shipSpeed.tiles = (uchar)(piVal[1]);
 					return true;
 				}
 				else
@@ -1843,8 +1865,8 @@ CItemBaseMulti::CItemBaseMulti( CItemBase* pBase ) :
 {
     m_dwRegionFlags = REGION_FLAG_NODECAY | REGION_ANTIMAGIC_TELEPORT | REGION_ANTIMAGIC_RECALL_IN | REGION_FLAG_NOBUILDING;
 	m_rect.SetRectEmpty();
-	m_shipSpeed.period = 0;
-	m_shipSpeed.tiles = 0;
+	_shipSpeed.period = 0;
+	_shipSpeed.tiles = 0;
 	m_SpeedMode = SMS_SLOW;
 
     _iBaseStorage = 489;    // Minimum possible value from 7x7 houses.
@@ -1981,10 +2003,10 @@ bool CItemBaseMulti::r_LoadVal(CScript &s)
             if (iQty < 1)
                 return false;
 
-            m_shipSpeed.period = (uchar)(ppArgs[0]);
+            _shipSpeed.period = (uchar)(ppArgs[0]);
 
             if (iQty >= 2)
-                m_shipSpeed.tiles = (uchar)(ppArgs[1]);
+                _shipSpeed.tiles = (uchar)(ppArgs[1]);
         }
         break;
         case MLC_TSPEECH:
@@ -2064,11 +2086,11 @@ bool CItemBaseMulti::r_WriteVal(lpctstr ptcKey, CSString & sVal, CTextConsole * 
 				const llong iIndex = Exp_GetLLVal(ptcKey);
 				if (iIndex < 0)
 					return false;
-                if (m_Components.IsValidIndex(size_t(iIndex)) == false)
+                if ((size_t)iIndex >= m_Components.size())
                     return false;
 
                 SKIP_SEPARATORS(ptcKey);
-                CMultiComponentItem item = m_Components.at(size_t(iIndex));
+                const CMultiComponentItem& item = m_Components[iIndex];
 
                 if (!strnicmp(ptcKey, "ID", 2)) sVal.FormatVal(item.m_id);
                 else if (!strnicmp(ptcKey, "DX", 2)) sVal.FormatVal(item.m_dx);
@@ -2098,18 +2120,18 @@ bool CItemBaseMulti::r_WriteVal(lpctstr ptcKey, CSString & sVal, CTextConsole * 
                 ++ptcKey;
                 if (!strnicmp(ptcKey, "TILES", 5))
                 {
-                    sVal.FormatVal(m_shipSpeed.tiles);
+                    sVal.FormatVal(_shipSpeed.tiles);
                     break;
                 }
                 else if (!strnicmp(ptcKey, "PERIOD", 6))
                 {
-                    sVal.FormatVal(m_shipSpeed.period);
+                    sVal.FormatVal(_shipSpeed.period);
                     break;
                 }
                 return false;
             }
 
-            sVal.Format("%d,%d", m_shipSpeed.period, m_shipSpeed.tiles);
+            sVal.Format("%d,%d", _shipSpeed.period, _shipSpeed.tiles);
             break;
         }
         default:
@@ -2204,7 +2226,18 @@ CItemBase * CItemBase::FindItemBase( ITEMID_TYPE id ) // static
 	return pBase;
 }
 
+
 //**************************************************
+
+CItemBaseDupe::CItemBaseDupe(ITEMID_TYPE id, CItemBase* pMasterItem) :
+	CResourceDef(CResourceID(RES_ITEMDEF, id)),
+	m_MasterItem(pMasterItem),
+	m_qwFlags(0), m_Height(0), m_Can(0)
+{
+	ASSERT(pMasterItem);
+	ASSERT(pMasterItem->GetResourceID().GetResIndex() != id);
+}
+
 CItemBaseDupe * CItemBaseDupe::GetDupeRef( ITEMID_TYPE id ) // static
 {
 	ADDTOCALLSTACK("CItemBaseDupe::GetDupeRef");
@@ -2229,26 +2262,17 @@ CItemBaseDupe * CItemBaseDupe::GetDupeRef( ITEMID_TYPE id ) // static
 	return nullptr; //we suspect item is loaded
 }
 
-
-word CItemBase::GetMaxAmount()
+void CItemBaseDupe::UnLink()
 {
-	ADDTOCALLSTACK("CItemBase::GetMaxAmount");
-	if (!IsStackableType())
-		return 0;
-
-	int64 iMax = GetDefNum("MaxAmount");
-	if (iMax)
-		return (word)minimum(iMax, UINT16_MAX);
-	else
-		return (word)minimum(g_Cfg.m_iItemsMaxAmount, UINT16_MAX);
+	m_MasterItem.SetRef(nullptr);
+	CResourceDef::UnLink();
 }
 
-bool CItemBase::SetMaxAmount(word amount)
+CItemBase* CItemBaseDupe::GetItemDef() const
 {
-	ADDTOCALLSTACK("CItemBase::SetMaxAmount");
-	if (!IsStackableType())
-		return false;
-
-	SetDefNum("MaxAmount", amount, false);
-	return true;
+	CResourceLink* pLink = m_MasterItem.GetRef();
+	ASSERT(pLink);
+	CItemBase* pItemDef = dynamic_cast <CItemBase*>(pLink);
+	ASSERT(pItemDef);
+	return pItemDef;
 }

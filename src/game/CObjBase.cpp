@@ -13,16 +13,17 @@
 #include "components/CCPropsItemWeapon.h"
 #include "components/CCSpawn.h"
 #include "components/CCItemDamageable.h"
-#include "CObjBase.h"
+#include "CTimedFunctions.h"
+#include "CSector.h"
+#include "CServer.h"
 #include "CWorld.h"
+#include "CWorldComm.h"
+#include "CWorldMap.h"
+#include "CWorldTickingList.h"
 #include "spheresvr.h"
 #include "triggers.h"
+#include "CObjBase.h"
 
-bool CObjBaseTemplate::IsDeleted() const
-{
-	ADDTOCALLSTACK("CObjBaseTemplate::IsDeleted");
-	return (!m_UID.IsValidUID() || ( GetParent() == &g_World.m_ObjDelete ));
-}
 
 int CObjBaseTemplate::IsWeird() const
 {
@@ -72,18 +73,18 @@ static bool GetDeltaStr( CPointMap & pt, tchar * pszDir )
 CObjBase::CObjBase( bool fItem )  // PROFILE_TIME_QTY is unused, CObjBase is not a real CTimedObject, it just needs it's virtual inheritance.
 {
 	++ sm_iCount;
-	m_iCreatedResScriptIdx = (size_t)-1;
-	m_iCreatedResScriptLine = -1;
-    _iRunningTriggerId = -1;
-    _iCallingObjTriggerId = -1;
+	_iCreatedResScriptIdx	= _iCreatedResScriptLine	= -1;
+    _iRunningTriggerId		= _iCallingObjTriggerId		= -1;
+
+	m_timestamp = 0;
+	m_CanMask = 0;
+	
+	m_attackBase = m_attackRange = 0;
+	m_defenseBase = m_defenseRange = 0;
+	m_ModAr = 0;
 
 	m_wHue = HUE_DEFAULT;
-	m_timestamp = 0;
-
-	m_CanMask = 0;
-	m_ModAr = 0;
 	m_ModMaxWeight = 0;
-    _uidSpawn.InitUID();
 
 	m_fStatusUpdate = 0;
 	m_PropertyList = nullptr;
@@ -105,15 +106,16 @@ CObjBase::CObjBase( bool fItem )  // PROFILE_TIME_QTY is unused, CObjBase is not
 	}
 
 	// Put in the idle list by default. (til placed in the world)
-	g_World.m_ObjNew.InsertHead( this );
+	g_World.m_ObjNew.InsertContentTail( this );
 }
 
 CObjBase::~CObjBase()
 {
-    RemoveSelf();
+	ADDTOCALLSTACK("CObjBase::~CObjBase");
     if (CCSpawn *pSpawn = GetSpawn())    // If I was created from a Spawn
     {
-        if (CCChampion* pChampion = static_cast<CCChampion*>(GetSpawn()->GetLink()->GetComponent(COMP_CHAMPION)))
+		CItem* pSpawnLink = pSpawn->GetLink();
+        if (CCChampion* pChampion = static_cast<CCChampion*>(pSpawnLink->GetComponent(COMP_CHAMPION)))
         {
             pChampion->DelObj(GetUID());
         }
@@ -122,14 +124,9 @@ CObjBase::~CObjBase()
             //pEntity->UnsubscribeComponent(pSpawn);    // Avoiding recursive calls from CCSpawn::DelObj when forcing the pChar/pItem to Delete();
             pSpawn->DelObj(GetUID());  // Then I should be removed from it's list.
         }
-    }
+    }	
 
-    {
-        std::shared_lock<std::shared_mutex> lock_su(g_World._Ticker.m_ObjStatusUpdates.THREAD_CMUTEX);
-        g_World._Ticker.m_ObjStatusUpdates.erase(this);
-    }
-
-    g_World._Ticker.m_TimedFunctions.Erase( GetUID() );
+	DeleteCleanup(true);
 
 	FreePropertyList();
 
@@ -138,6 +135,38 @@ CObjBase::~CObjBase()
 
 	// free up the UID slot.
 	SetUID( UID_UNUSED, false );
+}
+
+bool CObjBase::IsDeleted() const
+{
+	return (!GetUID().IsValidUID() || (GetParent() == &g_World.m_ObjDelete));
+}
+
+void CObjBase::DeletePrepare()
+{
+	ADDTOCALLSTACK("CObjBase::DeletePrepare");
+	// Prepare to delete.
+	RemoveFromView();
+	RemoveSelf();	// Must remove early or else virtuals will fail.
+}
+
+void CObjBase::DeleteCleanup(bool fForce)
+{
+	ADDTOCALLSTACK("CObjBase::DeleteCleanup");
+	CEntity::Delete(fForce);
+	CWorldTickingList::DelObjStatusUpdate(this);
+	CWorldTickingList::DelObjSingle(this);
+	CTimedFunctions::Erase(GetUID());
+}
+
+bool CObjBase::Delete(bool fForce)
+{
+	ADDTOCALLSTACK("CObjBase::Delete");
+	DeletePrepare();
+	DeleteCleanup(fForce);
+	
+	g_World.m_ObjDelete.InsertContentTail(this);
+	return true;
 }
 
 bool CObjBase::IsContainer() const
@@ -347,7 +376,8 @@ void CObjBase::r_WriteSafe( CScript & s )
 		uid = GetUID();
 
 		//	objects with TAG.NOSAVE set are not saved
-		if ( m_TagDefs.GetKeyNum("NOSAVE") )
+		const CVarDefCont* pVarNoSave = m_TagDefs.GetKey("NOSAVE");
+		if (pVarNoSave && pVarNoSave->GetKey())
 			return;
 
 		if ( !g_Cfg.m_fSaveGarbageCollect )
@@ -390,7 +420,7 @@ void CObjBase::Effect(EFFECT_TYPE motion, ITEMID_TYPE id, const CObjBase * pSour
     byte bSpeedSeconds, byte bLoop, bool fExplode, dword color, dword render, word effectid, word explodeid, word explodesound, dword effectuid, byte type) const
 {
 	ADDTOCALLSTACK("CObjBase::Effect");
-	
+
     if ( motion == EFFECT_FADE_SCREEN )
     {
         // This effect must be used only on client chars (and send it only to this client)
@@ -425,7 +455,7 @@ void CObjBase::EffectLocation(EFFECT_TYPE motion, ITEMID_TYPE id, const CPointMa
     byte bSpeedSeconds, byte bLoop, bool fExplode, dword color, dword render, word effectid, word explodeid, word explodesound, dword effectuid, byte type) const
 {
 	ADDTOCALLSTACK("CObjBase::EffectLocation");
-	
+
     if ( motion == EFFECT_FADE_SCREEN )
     {
         // This effect must be used only on client chars (and send it only to this client)
@@ -439,7 +469,7 @@ void CObjBase::EffectLocation(EFFECT_TYPE motion, ITEMID_TYPE id, const CPointMa
         }
         return;
     }
-    
+
     // show for everyone nearby
 	ClientIterator it;
 	for (CClient* pClient = it.next(); pClient != nullptr; pClient = it.next())
@@ -550,30 +580,30 @@ void CObjBase::Emote2(lpctstr pText, lpctstr pText1, CClient * pClientExclude, b
 
 // Speak to all clients in the area.
 // ASCII packet
-void CObjBase::Speak( lpctstr pText, HUE_TYPE wHue, TALKMODE_TYPE mode, FONT_TYPE font ) const
+void CObjBase::Speak( lpctstr pText, HUE_TYPE wHue, TALKMODE_TYPE mode, FONT_TYPE font )
 {
 	ADDTOCALLSTACK_INTENSIVE("CObjBase::Speak");
-	g_World.Speak( this, pText, wHue, mode, font );
+	CWorldComm::Speak( this, pText, wHue, mode, font );
 }
 
 // Speak to all clients in the area.
 // Unicode packet
-void CObjBase::SpeakUTF8( lpctstr pText, HUE_TYPE wHue, TALKMODE_TYPE mode, FONT_TYPE font, CLanguageID lang ) const
+void CObjBase::SpeakUTF8( lpctstr pText, HUE_TYPE wHue, TALKMODE_TYPE mode, FONT_TYPE font, CLanguageID lang )
 {
 	ADDTOCALLSTACK_INTENSIVE("CObjBase::SpeakUTF8");
 	// convert UTF8 to UNICODE.
 	nchar szBuffer[ MAX_TALK_BUFFER ];
 	CvtSystemToNUNICODE( szBuffer, CountOf(szBuffer), pText, -1 );
-	g_World.SpeakUNICODE( this, szBuffer, wHue, mode, font, lang );
+	CWorldComm::SpeakUNICODE( this, szBuffer, wHue, mode, font, lang );
 }
 
 // Speak to all clients in the area.
 // Unicode packet
 // Difference with SpeakUTF8: this method accepts as text input an nword, which is unicode if sphere is compiled with UNICODE macro)
-void CObjBase::SpeakUTF8Ex( const nword * pText, HUE_TYPE wHue, TALKMODE_TYPE mode, FONT_TYPE font, CLanguageID lang ) const
+void CObjBase::SpeakUTF8Ex( const nword * pText, HUE_TYPE wHue, TALKMODE_TYPE mode, FONT_TYPE font, CLanguageID lang )
 {
 	ADDTOCALLSTACK_INTENSIVE("CObjBase::SpeakUTF8Ex");
-	g_World.SpeakUNICODE( this, pText, wHue, mode, font, lang );
+	CWorldComm::SpeakUNICODE( this, pText, wHue, mode, font, lang );
 }
 
 bool CObjBase::MoveNear(CPointMap pt, ushort iSteps )
@@ -835,7 +865,7 @@ bool CObjBase::r_WriteVal( lpctstr ptcKey, CSString &sVal, CTextConsole * pSrc, 
 			break;
 		//return as decimal number or 0 if not set
 		//On these ones, check BaseDef if not found on dynamic
-		
+
         case OC_RECIPEALCHEMY:
         case OC_RECIPEBLACKSMITH:
         case OC_RECIPEBOWCRAFT:
@@ -1144,7 +1174,7 @@ bool CObjBase::r_WriteVal( lpctstr ptcKey, CSString &sVal, CTextConsole * pSrc, 
             GETNONWHITESPACE(ptcKey);
 
             COMPPROPS_TYPE id = (COMPPROPS_TYPE)Exp_GetVal(ptcKey);
-            bool fRes = (id >= 0) && (id < COMP_PROPS_QTY) && (nullptr != CEntityProps::GetComponentProps(id));
+            bool fRes = (id < COMP_PROPS_QTY) && (nullptr != CEntityProps::GetComponentProps(id));
             sVal.FormatVal(int(fRes));
             break;
         }
@@ -1206,7 +1236,7 @@ bool CObjBase::r_WriteVal( lpctstr ptcKey, CSString &sVal, CTextConsole * pSrc, 
 
 					if ( fP )
 					{
-						CPointMap pt = ( index == OC_ISNEARTYPETOP ) ? ( g_World.FindTypeNear_Top(GetTopPoint(), (IT_TYPE)iType, iDistance ) ) : ( g_World.FindItemTypeNearby(GetTopPoint(), (IT_TYPE)iType, iDistance, fCheckMulti ) );
+						CPointMap pt = ( index == OC_ISNEARTYPETOP ) ? ( CWorldMap::FindTypeNear_Top(GetTopPoint(), (IT_TYPE)iType, iDistance ) ) : ( CWorldMap::FindItemTypeNearby(GetTopPoint(), (IT_TYPE)iType, iDistance, fCheckMulti ) );
 
 						if ( !pt.IsValidPoint() )
 							sVal.FormatVal( 0 );
@@ -1214,7 +1244,7 @@ bool CObjBase::r_WriteVal( lpctstr ptcKey, CSString &sVal, CTextConsole * pSrc, 
 							sVal = pt.WriteUsed();
 					}
 					else
-						sVal.FormatVal( ( index == OC_ISNEARTYPETOP ) ? ( g_World.IsTypeNear_Top(GetTopPoint(), (IT_TYPE)iType, iDistance ) ) : ( g_World.IsItemTypeNear(GetTopPoint(), (IT_TYPE)iType, iDistance, fCheckMulti ) ) );
+						sVal.FormatVal( ( index == OC_ISNEARTYPETOP ) ? ( CWorldMap::IsTypeNear_Top(GetTopPoint(), (IT_TYPE)iType, iDistance ) ) : ( CWorldMap::IsItemTypeNear(GetTopPoint(), (IT_TYPE)iType, iDistance, fCheckMulti ) ) );
 				}
 			}
 			break;
@@ -1304,8 +1334,8 @@ bool CObjBase::r_WriteVal( lpctstr ptcKey, CSString &sVal, CTextConsole * pSrc, 
 				if ( ptcKey[8] != '.' )
 					return false;
 				ptcKey += 9;
-				//sVal.FormatVal( (g_World.m_TimedFunctions.IsTimer(GetUID(),ptcKey)) ? 1 : 0 );
-				sVal.FormatVal( g_World._Ticker.m_TimedFunctions.IsTimer(GetUID(),ptcKey) );
+				//sVal.FormatVal( (g_World._TimedFunctions.IsTimer(GetUID(),ptcKey)) ? 1 : 0 );
+				sVal.FormatVal( CTimedFunctions::IsTimer(GetUID(),ptcKey) );
                 break;
 			}
 			break;
@@ -2068,7 +2098,7 @@ bool CObjBase::r_Verb( CScript & s, CTextConsole * pSrc ) // Execute command fro
 					iMaxLength,	sPrompt, sOrgValue, this );
 			}
 			break;
-		
+
 		case OV_MENU:
 			{
 				EXC_SET_BLOCK("MENU");
@@ -2177,7 +2207,7 @@ bool CObjBase::r_Verb( CScript & s, CTextConsole * pSrc ) // Execute command fro
             }
             else
                 return false;
-        }	
+        }
 			break;
 		case OV_PROMPTCONSOLE:
 		case OV_PROMPTCONSOLEU:
@@ -2397,11 +2427,11 @@ bool CObjBase::r_Verb( CScript & s, CTextConsole * pSrc ) // Execute command fro
 				EXC_SET_BLOCK("TIMERF");
 				if ( !strnicmp( s.GetArgStr(), "CLEAR", 5 ) )
 				{
-					g_World._Ticker.m_TimedFunctions.Erase(GetUID());
+					CTimedFunctions::Erase(GetUID());
 				}
 				else if ( !strnicmp( s.GetArgStr(), "STOP", 4 ) )
 				{
-					g_World._Ticker.m_TimedFunctions.Stop(GetUID(),s.GetArgStr()+5);
+					CTimedFunctions::Stop(GetUID(),s.GetArgStr()+5);
 				}
 				else
 				{
@@ -2422,7 +2452,7 @@ bool CObjBase::r_Verb( CScript & s, CTextConsole * pSrc ) // Execute command fro
 						}
 						else
 						{
-							g_World._Ticker.m_TimedFunctions.Add(GetUID(), el, p);
+							CTimedFunctions::Add(GetUID(), el, p);
 						}
 					}
 				}
@@ -2815,8 +2845,7 @@ void CObjBase::UpdatePropertyFlag()
     // Items equipped, inside containers or with timer expired doesn't receive ticks and need to be added to a list of items to be processed separately
     if (!IsTopLevel() || IsTimerExpired())
     {
-        std::shared_lock<std::shared_mutex> lock_su(g_World._Ticker.m_ObjStatusUpdates.THREAD_CMUTEX);
-        g_World._Ticker.m_ObjStatusUpdates.emplace(this);
+		CWorldTickingList::AddObjStatusUpdate(this);
     }
 }
 
@@ -2876,14 +2905,6 @@ void CObjBase::ResendTooltip(bool fSendFull, bool fUseCache)
         m_fStatusUpdate &= ~SU_UPDATE_TOOLTIP;
 }
 
-void CObjBase::DeletePrepare()
-{
-	ADDTOCALLSTACK("CObjBase::DeletePrepare");
-	// Prepare to delete.
-	RemoveFromView();
-	RemoveSelf();	// Must remove early or else virtuals will fail.
-}
-
 CCSpawn * CObjBase::GetSpawn()
 {
     if (_uidSpawn.IsValidUID())
@@ -2923,7 +2944,7 @@ void CObjBase::SetTimeStamp( int64 t_time)
 	m_timestamp = t_time;
 }
 
-CSString CObjBase::GetPropStr( const CComponentProps* pCompProps, int iPropIndex, bool fZero, const CComponentProps* pBaseCompProps ) const
+CSString CObjBase::GetPropStr( const CComponentProps* pCompProps, CComponentProps::PropertyIndex_t iPropIndex, bool fZero, const CComponentProps* pBaseCompProps ) const
 {
     CSString sProp;
     if (pCompProps && pCompProps->GetPropertyStrPtr(iPropIndex, &sProp, fZero))
@@ -2933,7 +2954,7 @@ CSString CObjBase::GetPropStr( const CComponentProps* pCompProps, int iPropIndex
     return sProp;
 }
 
-CSString CObjBase::GetPropStr( COMPPROPS_TYPE iCompPropsType, int iPropIndex, bool fZero, bool fDef ) const
+CSString CObjBase::GetPropStr( COMPPROPS_TYPE iCompPropsType, CComponentProps::PropertyIndex_t iPropIndex, bool fZero, bool fDef ) const
 {
     CSString sProp;
     const CComponentProps* pCompProps = GetComponentProps(iCompPropsType);
@@ -2950,7 +2971,7 @@ CSString CObjBase::GetPropStr( COMPPROPS_TYPE iCompPropsType, int iPropIndex, bo
     return sProp;
 }
 
-CComponentProps::PropertyValNum_t CObjBase::GetPropNum( const CComponentProps* pCompProps, int iPropIndex, const CComponentProps* pBaseCompProps ) const
+CComponentProps::PropertyValNum_t CObjBase::GetPropNum( const CComponentProps* pCompProps, CComponentProps::PropertyIndex_t iPropIndex, const CComponentProps* pBaseCompProps ) const
 {
     CComponentProps::PropertyValNum_t iProp = 0;
     if (pCompProps && pCompProps->GetPropertyNumPtr(iPropIndex, &iProp))
@@ -2960,7 +2981,7 @@ CComponentProps::PropertyValNum_t CObjBase::GetPropNum( const CComponentProps* p
     return iProp;
 }
 
-CComponentProps::PropertyValNum_t CObjBase::GetPropNum( COMPPROPS_TYPE iCompPropsType, int iPropIndex, bool fDef ) const
+CComponentProps::PropertyValNum_t CObjBase::GetPropNum( COMPPROPS_TYPE iCompPropsType, CComponentProps::PropertyIndex_t iPropIndex, bool fDef ) const
 {
     CComponentProps::PropertyValNum_t iProp = 0;
     const CComponentProps* pCompProps = GetComponentProps(iCompPropsType);
@@ -2977,14 +2998,14 @@ CComponentProps::PropertyValNum_t CObjBase::GetPropNum( COMPPROPS_TYPE iCompProp
     return iProp;
 }
 
-void CObjBase::SetPropStr( CComponentProps* pCompProps, int iPropIndex, lpctstr ptcVal, bool fDeleteZero )
+void CObjBase::SetPropStr( CComponentProps* pCompProps, CComponentProps::PropertyIndex_t iPropIndex, lpctstr ptcVal, bool fDeleteZero )
 {
     ASSERT(pCompProps);
     const RESDISPLAY_VERSION iLimitToEra = Base_GetDef()->_iEraLimitProps;
     pCompProps->SetPropertyStr(iPropIndex, ptcVal, this, iLimitToEra, fDeleteZero);
 }
 
-void CObjBase::SetPropStr( COMPPROPS_TYPE iCompPropsType, int iPropIndex, lpctstr ptcVal, bool fDeleteZero )
+void CObjBase::SetPropStr( COMPPROPS_TYPE iCompPropsType, CComponentProps::PropertyIndex_t iPropIndex, lpctstr ptcVal, bool fDeleteZero )
 {
     CComponentProps* pCompProps = GetComponentProps(iCompPropsType);
     if (!pCompProps)
@@ -2996,14 +3017,14 @@ void CObjBase::SetPropStr( COMPPROPS_TYPE iCompPropsType, int iPropIndex, lpctst
     pCompProps->SetPropertyStr(iPropIndex, ptcVal, this, iLimitToEra, fDeleteZero);
 }
 
-void CObjBase::SetPropNum( CComponentProps* pCompProps, int iPropIndex, CComponentProps::PropertyValNum_t iVal )
+void CObjBase::SetPropNum( CComponentProps* pCompProps, CComponentProps::PropertyIndex_t iPropIndex, CComponentProps::PropertyValNum_t iVal )
 {
     ASSERT(pCompProps);
     const RESDISPLAY_VERSION iLimitToEra = Base_GetDef()->_iEraLimitProps;
     pCompProps->SetPropertyNum(iPropIndex, iVal, this, iLimitToEra);
 }
 
-void CObjBase::SetPropNum( COMPPROPS_TYPE iCompPropsType, int iPropIndex, CComponentProps::PropertyValNum_t iVal )
+void CObjBase::SetPropNum( COMPPROPS_TYPE iCompPropsType, CComponentProps::PropertyIndex_t iPropIndex, CComponentProps::PropertyValNum_t iVal )
 {
     CComponentProps* pCompProps = GetComponentProps(iCompPropsType);
     if (!pCompProps)
@@ -3015,7 +3036,7 @@ void CObjBase::SetPropNum( COMPPROPS_TYPE iCompPropsType, int iPropIndex, CCompo
     pCompProps->SetPropertyNum(iPropIndex, iVal, this, iLimitToEra);
 }
 
-void CObjBase::ModPropNum( CComponentProps* pCompProps, int iPropIndex, CComponentProps::PropertyValNum_t iMod, const CComponentProps* pBaseCompProps )
+void CObjBase::ModPropNum( CComponentProps* pCompProps, CComponentProps::PropertyIndex_t iPropIndex, CComponentProps::PropertyValNum_t iMod, const CComponentProps* pBaseCompProps )
 {
     ASSERT(pCompProps);
     CComponentProps::PropertyValNum_t iVal = 0;
@@ -3030,7 +3051,7 @@ void CObjBase::ModPropNum( CComponentProps* pCompProps, int iPropIndex, CCompone
     pCompProps->SetPropertyNum(iPropIndex, iMod + iVal, this, iLimitToEra);
 }
 
-void CObjBase::ModPropNum( COMPPROPS_TYPE iCompPropsType, int iPropIndex, CComponentProps::PropertyValNum_t iMod, bool fBaseDef )
+void CObjBase::ModPropNum( COMPPROPS_TYPE iCompPropsType, CComponentProps::PropertyIndex_t iPropIndex, CComponentProps::PropertyValNum_t iMod, bool fBaseDef )
 {
     CComponentProps::PropertyValNum_t iVal = 0;
     CComponentProps* pCompProps = GetComponentProps(iCompPropsType);
@@ -3195,22 +3216,6 @@ void CObjBase::DupeCopy( const CObjBase * pObj )
     CEntityProps::Copy(pObj);
 }
 
-void CObjBase::Delete(bool fForce)
-{
-	ADDTOCALLSTACK("CObjBase::Delete");
-	DeletePrepare();
-    CEntity::Delete(fForce);
-    CTimedObject::Delete();
-
-    {
-        std::shared_lock<std::shared_mutex> lock_su(g_World._Ticker.m_ObjStatusUpdates.THREAD_CMUTEX);
-        g_World._Ticker.m_ObjStatusUpdates.erase(this);
-    }
-
-    g_World._Ticker.m_TimedFunctions.Erase( GetUID() );
-    g_World.m_ObjDelete.InsertHead(this);
-}
-
 TRIGRET_TYPE CObjBase::Spell_OnTrigger( SPELL_TYPE spell, SPTRIG_TYPE stage, CChar * pSrc, CScriptTriggerArgs * pArgs )
 {
 	ADDTOCALLSTACK("CObjBase::Spell_OnTrigger");
@@ -3228,6 +3233,11 @@ TRIGRET_TYPE CObjBase::Spell_OnTrigger( SPELL_TYPE spell, SPTRIG_TYPE stage, CCh
 		}
 	}
 	return TRIGRET_RET_DEFAULT;
+}
+
+bool CObjBase::IsRunningTrigger() const
+{
+	return ((_iRunningTriggerId >= 0) || !_sRunningTrigger.empty());
 }
 
 bool CObjBase::CallPersonalTrigger(tchar * pArgs, CTextConsole * pSrc, TRIGRET_TYPE & trResult)

@@ -6,6 +6,8 @@
 #define _INC_CSCRIPTTRIGGERARGS_H
 
 #include "CScriptObj.h"
+#include "CVarDefMap.h"
+#include "CLocalVarsExtra.h"
 #include <vector>
 
 class CScriptTriggerArgs : public CScriptObj
@@ -28,66 +30,34 @@ public:
     std::vector<lpctstr>	m_v;
 
     CVarDefMap 				m_VarsLocal;	// "LOCAL.x" = local variable x
-    CVarFloat				m_VarsFloat;	// "FLOAT.x" = float local variable x
+    CLocalFloatVars			m_VarsFloat;	// "FLOAT.x" = float local variable x
     CLocalObjMap			m_VarObjs;		// "REFx" = local object x
 
 public:
-    CScriptTriggerArgs() :
-        m_iN1(0),  m_iN2(0), m_iN3(0)
-    {
-        m_pO1 = nullptr;
-    }
-
+    CScriptTriggerArgs();
     explicit CScriptTriggerArgs( lpctstr pszStr );
+    explicit CScriptTriggerArgs(CScriptObj* pObj);
+    explicit CScriptTriggerArgs(int64 iVal1);
+    CScriptTriggerArgs(int64 iVal1, int64 iVal2, int64 iVal3 = 0);
+    CScriptTriggerArgs(int64 iVal1, int64 iVal2, CScriptObj* pObj);
 
-    explicit CScriptTriggerArgs( CScriptObj * pObj ) :
-        m_iN1(0),  m_iN2(0), m_iN3(0), m_pO1(pObj)
-    {
-    }
-
-    explicit CScriptTriggerArgs( int64 iVal1 ) :
-        m_iN1(iVal1),  m_iN2(0), m_iN3(0)
-    {
-        m_pO1 = nullptr;
-    }
-    CScriptTriggerArgs( int64 iVal1, int64 iVal2, int64 iVal3 = 0 ) :
-        m_iN1(iVal1), m_iN2(iVal2), m_iN3(iVal3)
-    {
-        m_pO1 = nullptr;
-    }
-
-    CScriptTriggerArgs( int64 iVal1, int64 iVal2, CScriptObj * pObj ) :
-        m_iN1(iVal1), m_iN2(iVal2), m_iN3(0), m_pO1(pObj)
-    {
-    }
-
-    virtual ~CScriptTriggerArgs()
-    {
-    };
+    virtual ~CScriptTriggerArgs() = default;
 
 private:
     CScriptTriggerArgs(const CScriptTriggerArgs& copy);
     CScriptTriggerArgs& operator=(const CScriptTriggerArgs& other);
 
 public:
-    void getArgNs( int64 *iVar1 = nullptr, int64 *iVar2 = nullptr, int64 *iVar3 = nullptr) //Puts the ARGN's into the specified variables
-    {
-        if (iVar1)
-            *iVar1 = this->m_iN1;
+    //Puts the ARGN's into the specified variables
+    void GetArgNs(int64* iVar1 = nullptr, int64* iVar2 = nullptr, int64* iVar3 = nullptr);
 
-        if (iVar2)
-            *iVar2 = this->m_iN2;
-
-        if (iVar3)
-            *iVar3 = this->m_iN3;
-    }
-
+    void Clear();
     void Init( lpctstr pszStr );
     bool r_Verb( CScript & s, CTextConsole * pSrc ) override;
     bool r_LoadVal( CScript & s ) override;
     bool r_GetRef( lpctstr & ptcKey, CScriptObj * & pRef ) override;
     bool r_WriteVal( lpctstr pKey, CSString & sVal, CTextConsole * pSrc = nullptr, bool fNoCallParent = false, bool fNoCallChildren = false ) override;
-    bool r_Copy( CTextConsole * pSrc );
+    //bool r_Copy( CTextConsole * pSrc );
     lpctstr GetName() const
     {
         return "ARG";

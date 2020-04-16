@@ -21,7 +21,6 @@
 
 
 class CCharNPC;
-class CMultiStorage;
 
 enum NPCBRAIN_TYPE	// General AI type.
 {
@@ -90,8 +89,8 @@ public:
 	{
 		int64	elapsed;
 		dword	charUID;
-		int64	amountDone;
-		int64	threat;
+		int		amountDone;
+		int		threat;
 		bool	ignore;
 	};
 	std::vector<LastAttackers> m_lastAttackers;
@@ -99,13 +98,14 @@ public:
 	struct NotoSaves
 	{
 		dword		charUID;	// Character viewing me
-		NOTO_TYPE	color;		// Color sent on movement packets
 		int64		time;		// Update timer
+		NOTO_TYPE	color;		// Color sent on movement packets
 		NOTO_TYPE	value;		// Notoriety type
 	};
 	std::vector<NotoSaves> m_notoSaves;
 
 	static const char *m_sClassName;
+
 	CCharPlayer * m_pPlayer;	// May even be an off-line player !
 	CCharNPC * m_pNPC;			// we can be both a player and an NPC if "controlled" ?
 	CPartyDef * m_pParty;		// What party am i in ?
@@ -121,7 +121,7 @@ public:
 	// Combat stuff. cached data. (not saved)
 	CUID m_uidWeapon;			// current Wielded weapon.	(could just get rid of this ?)
 	word m_defense;				// calculated armor worn (NOT intrinsic armor)
-    int _iRange;
+    ushort _uiRange;
 
 	height_t m_height;			// Height set in-game or under some trigger (height=) - for both items and chars
 
@@ -136,7 +136,7 @@ public:
 
 	// Saved stuff.
 	DIR_TYPE m_dirFace;			// facing this dir.
-	CSString m_sTitle;			// Special title such as "the guard" (replaces the normal skill title)
+	std::string m_sTitle;		// Special title such as "the guard" (replaces the normal skill title) [use std::string instead of CSString because the former is allocated on-demand]
 	CPointMap m_ptHome;			// What is our "home" region. (towns and bounding of NPC's)
 	int64 m_virtualGold;		// Virtual gold used by TOL clients
 
@@ -149,15 +149,6 @@ public:
 	HUE_TYPE m_prev_Hue;		// Backup of skin color. in case of polymorph etc.
 	HUE_TYPE m_wBloodHue;		// Replicating CharDef's BloodColor on the char, or overriding it.
 
-	// Client's local light (might be useful in the future for NPCs also? keep it here for now)
-	byte m_LocalLight;
-
-    // Multis
-    uint8 _iMaxHouses;              // Max houses this player (Client?) can have (Overriding CAccount::_iMaxHouses)
-    uint8 _iMaxShips;               // Max ships this player (Client?) can have (Overriding CAccount::_iMaxShips)
-    CMultiStorage *_pMultiStorage;	// List of houses.
-
-	// When events happen to the char. check here for reaction scripts.
 
 	// Skills, Stats and health
 	struct
@@ -174,11 +165,13 @@ public:
     short m_iKarma;
     ushort m_uiFame;
 
-	int64  _timeNextRegen;	    // When did i get my last regen tick ?
+	int64  _iTimeCreate;	    // When was i created ?
+	int64  _iTimePeriodicTick;
+	int64  _iTimeNextRegen;	    // When did i get my last regen tick ?
     ushort _iRegenTickCount;    // ticks until next regen.
-	int64  m_timeCreate;	    // When was i created ?
+	
 
-	int64 m_timeLastHitsUpdate;
+	int64 _iTimeLastHitsUpdate;
 	int64 m_timeLastCallGuards;
 
 	// Some character action in progress.
@@ -287,7 +280,7 @@ public:
 		// NPCACT_RIDDEN
 		struct
 		{
-			CUIDBase m_uidFigurine;     // ACTARG1 = This creature is being ridden by this object link. IT_FIGURINE IT_EQ_HORSE
+			CUID m_uidFigurine;     // ACTARG1 = This creature is being ridden by this object link. IT_FIGURINE IT_EQ_HORSE
 		} m_atRidden;
 
 		// NPCACT_TALK
@@ -311,21 +304,25 @@ public:
 public:
 	CChar( CREID_TYPE id );
 	virtual ~CChar(); // Delete character
-	bool DupeFrom( CChar * pChar, bool fNewbieItems);
+	bool DupeFrom(const CChar * pChar, bool fNewbieItems);
 
 private:
 	CChar(const CChar& copy);
 	CChar& operator=(const CChar& other);
 
+protected:
+	void DeleteCleanup(bool fForce);
+	virtual void DeletePrepare() override;
 public:
-    CMultiStorage *GetMultiStorage();
-    virtual void GoSleep();
-    virtual void GoAwake();
-	// Status and attributes ------------------------------------
-	int IsWeird() const;
-	char GetFixZ( const CPointMap& pt, dword dwBlockFlags = 0);
-	virtual void Delete(bool bforce = false) override;
 	bool NotifyDelete();
+	virtual bool Delete(bool fForce = false) override;
+
+    virtual void GoSleep() override;
+    virtual void GoAwake() override;
+
+	// Status and attributes ------------------------------------	
+	int IsWeird() const;
+	char GetFixZ(const CPointMap& pt, dword dwBlockFlags = 0);
 	bool IsStatFlag( uint64 iStatFlag ) const;
 	void StatFlag_Set(uint64 iStatFlag);
 	void StatFlag_Clear(uint64 iStatFlag);
@@ -436,6 +433,8 @@ public:
     ushort GetFame() const;
     void SetFame(ushort uiNewFame);
 
+	void Stat_StrCheckEquip();
+
 	// Location and movement ------------------------------------
 private:
 	bool TeleportToCli( int iType, int iArgs );
@@ -448,7 +447,6 @@ private:
 	bool IsVerticalSpace( const CPointMap& ptDest, bool fForceMount = false ) const;
 
 public:
-	CChar* GetNext() const;
 	const CObjBaseTemplate * GetTopLevelObj() const override;
 	CObjBaseTemplate* GetTopLevelObj() override;
 
@@ -518,11 +516,12 @@ public:
 	int FixWeirdness();
 	void CreateNewCharCheck();
 
-private:
 	// Contents/Carry stuff. ---------------------------------
-	void ContentAdd( CItem * pItem, bool bForceNoStack = false );
+private:
+	virtual void ContentAdd( CItem * pItem, bool bForceNoStack = false ) override;
 protected:
-	void OnRemoveObj( CSObjListRec* pObRec );	// Override this = called when removed from list.
+	virtual void OnRemoveObj( CSObjContRec* pObRec ) override;	// Override this = called when removed from list.
+
 public:
 	bool CanCarry( const CItem * pItem ) const;
 	bool CanEquipStr( CItem * pItem ) const;
@@ -1047,29 +1046,29 @@ public:
 	inline int GetAttackersCount() {
 		return (int)m_lastAttackers.size();
 	}
-	bool	Attacker_Add(CChar * pChar, int64 threat = 0);
+	bool	Attacker_Add(CChar * pChar, int threat = 0);
 	CChar * Attacker_GetLast() const;
-	bool	Attacker_Delete(std::vector<LastAttackers>::iterator &itAttacker, bool bForced = false, ATTACKER_CLEAR_TYPE type = ATTACKER_CLEAR_FORCED);
-	bool	Attacker_Delete(int attackerIndex, bool bForced = false, ATTACKER_CLEAR_TYPE type = ATTACKER_CLEAR_FORCED);
-	bool	Attacker_Delete(const CChar * pChar, bool bForced = false, ATTACKER_CLEAR_TYPE type = ATTACKER_CLEAR_FORCED);
+	bool	Attacker_Delete(std::vector<LastAttackers>::iterator &itAttacker, bool fForced = false, ATTACKER_CLEAR_TYPE type = ATTACKER_CLEAR_FORCED);
+	bool	Attacker_Delete(int attackerIndex, bool fForced = false, ATTACKER_CLEAR_TYPE type = ATTACKER_CLEAR_FORCED);
+	bool	Attacker_Delete(const CChar * pChar, bool fForced = false, ATTACKER_CLEAR_TYPE type = ATTACKER_CLEAR_FORCED);
 	void	Attacker_RemoveChar();
 	void	Attacker_Clear();
 	void	Attacker_CheckTimeout();
-	int64	Attacker_GetDam(int attackerIndex) const;
-	void	Attacker_SetDam(const CChar * pChar, int64 value);
-	void	Attacker_SetDam(int attackerIndex, int64 value);
+	int		Attacker_GetDam(int attackerIndex) const;
+	void	Attacker_SetDam(const CChar * pChar, int value);
+	void	Attacker_SetDam(int attackerIndex, int value);
 	CChar * Attacker_GetUID(int attackerIndex) const;
 	int64	Attacker_GetElapsed(int attackerIndex) const;
 	void	Attacker_SetElapsed(const CChar * pChar, int64 value);
 	void	Attacker_SetElapsed(int attackerIndex, int64 value);
-	int64	Attacker_GetThreat(int attackerIndex) const;
-	void	Attacker_SetThreat(const CChar * pChar, int64 value);
-	void	Attacker_SetThreat(int attackerIndex, int64 value);
+	int		Attacker_GetThreat(int attackerIndex) const;
+	void	Attacker_SetThreat(const CChar * pChar, int value);
+	void	Attacker_SetThreat(int attackerIndex, int value);
 	bool	Attacker_GetIgnore(int pChar) const;
 	bool	Attacker_GetIgnore(const CChar * pChar) const;
 	void	Attacker_SetIgnore(size_t pChar, bool fIgnore);
 	void	Attacker_SetIgnore(const CChar * pChar, bool fIgnore);
-	int64	Attacker_GetHighestThreat() const;
+	int		Attacker_GetHighestThreat() const;
 	int		Attacker_GetID(const CChar * pChar) const;
 	int		Attacker_GetID(const CUID& pChar) const;
 
@@ -1078,8 +1077,8 @@ public:
 	void InitPlayer( CClient * pClient, const char * pszCharname, bool fFemale, RACE_TYPE rtRace, ushort wStr, ushort wDex, ushort wInt,
 		PROFESSION_TYPE iProf, SKILL_TYPE skSkill1, ushort uiSkillVal1, SKILL_TYPE skSkill2, ushort uiSkillVal2, SKILL_TYPE skSkill3, ushort uiSkillVal3, SKILL_TYPE skSkill4, ushort uiSkillVal4,
 		HUE_TYPE wSkinHue, ITEMID_TYPE idHair, HUE_TYPE wHairHue, ITEMID_TYPE idBeard, HUE_TYPE wBeardHue, HUE_TYPE wShirtHue, HUE_TYPE wPantsHue, ITEMID_TYPE idFace, int iStartLoc );
-	bool ReadScriptTrig(CCharBase * pCharDef, CTRIG_TYPE trig, bool bVendor = false);
-	bool ReadScript(CResourceLock &s, bool bVendor = false);
+	bool ReadScriptTrig(CCharBase * pCharDef, CTRIG_TYPE trig, bool fVendor = false);
+	bool ReadScript(CResourceLock &s, bool fVendor = false);
 	void NPC_LoadScript( bool fRestock );
 	void NPC_CreateTrigger();
 
@@ -1142,15 +1141,15 @@ public:
 #define DEATH_HASCORPSE 0x010
 
     void Speak_RevealCheck(TALKMODE_TYPE mode);
-	virtual void Speak( lpctstr pText, HUE_TYPE wHue = HUE_TEXT_DEF, TALKMODE_TYPE mode = TALKMODE_SAY, FONT_TYPE font = FONT_NORMAL );
-	virtual void SpeakUTF8( lpctstr pText, HUE_TYPE wHue= HUE_TEXT_DEF, TALKMODE_TYPE mode= TALKMODE_SAY, FONT_TYPE font= FONT_NORMAL, CLanguageID lang = 0 );
-	virtual void SpeakUTF8Ex( const nword * pText, HUE_TYPE wHue, TALKMODE_TYPE mode, FONT_TYPE font, CLanguageID lang );
+	virtual void Speak( lpctstr pText, HUE_TYPE wHue = HUE_TEXT_DEF, TALKMODE_TYPE mode = TALKMODE_SAY, FONT_TYPE font = FONT_NORMAL ) override;
+	virtual void SpeakUTF8( lpctstr pText, HUE_TYPE wHue= HUE_TEXT_DEF, TALKMODE_TYPE mode= TALKMODE_SAY, FONT_TYPE font = FONT_NORMAL, CLanguageID lang = 0 ) override;
+	virtual void SpeakUTF8Ex( const nword * pText, HUE_TYPE wHue, TALKMODE_TYPE mode, FONT_TYPE font, CLanguageID lang ) override;
 
 	bool OnFreezeCheck() const;
     bool IsStuck(bool fFreezeCheck);
 
 	void DropAll( CItemContainer * pCorpse = nullptr, uint64 dwAttr = 0 );
-	void UnEquipAllItems( CItemContainer * pCorpse = nullptr, bool bLeaveHands = false );
+	void UnEquipAllItems( CItemContainer * pCorpse = nullptr, bool fLeaveHands = false );
 	void Wake();
 	void SleepStart( bool fFrontFall );
 
@@ -1297,6 +1296,7 @@ public:
 	static CChar * CreateBasic( CREID_TYPE baseID );
 	static CChar * CreateNPC( CREID_TYPE id );
 };
+
 
 inline bool CChar::IsSkillBase( SKILL_TYPE skill ) noexcept // static
 {

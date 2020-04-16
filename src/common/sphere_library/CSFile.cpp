@@ -1,3 +1,6 @@
+#include "../../sphere/threads.h"
+#include "../CLog.h"
+#include "CSFile.h"
 #ifdef _WIN32
     #include <io.h> 	// findfirst
 #else
@@ -5,10 +8,6 @@
 	#include <sys/types.h>
 	#include <sys/stat.h>
 #endif
-#include "../../sphere/threads.h"
-#include "../CLog.h"
-#include "CSFile.h"
-
 
 // CSFile:: Constructors, Destructor, Asign operator.
 
@@ -228,20 +227,20 @@ int CSFile::_GetPosition() const
     DWORD ret = SetFilePointer( _fileDescriptor, 0, nullptr, FILE_CURRENT );
     if (ret == INVALID_SET_FILE_POINTER)
     {
-        _NotifyIOError("CFile::GetPosition");
+        _NotifyIOError("CSFile::GetPosition");
         return 0;
     }
 #else
 	off_t ret = lseek( _fileDescriptor, 0, SEEK_CUR );
     if (ret == (off_t)-1)
     {
-        _NotifyIOError("CFile::GetPosition");
+        _NotifyIOError("CSFile::GetPosition");
         return 0;
     }
 #endif
     if (ret > INT_MAX)
     {
-        _NotifyIOError("CFile::GetPosition (length)");
+        _NotifyIOError("CSFile::GetPosition (length)");
         return 0;
     }
     return (int)ret;
@@ -312,29 +311,28 @@ int CSFile::Seek( int iOffset, int iOrigin )
 void CSFile::_SeekToBegin()
 {
     ADDTOCALLSTACK("CSFile::_SeekToBegin");
-    _Seek( 0, SEEK_SET );
+    CSFile::_Seek( 0, SEEK_SET );
 }
 void CSFile::SeekToBegin()
 {
     ADDTOCALLSTACK("CSFile::SeekToBegin");
-	Seek( 0, SEEK_SET );
+    CSFile::Seek( 0, SEEK_SET );
 }
 
 int CSFile::_SeekToEnd()
 {
     ADDTOCALLSTACK("CSFile::_SeekToEnd");
-    return _Seek( 0, SEEK_END );
+    return CSFile::_Seek( 0, SEEK_END );
 }
 int CSFile::SeekToEnd()
 {
     ADDTOCALLSTACK("CSFile::SeekToEnd");
-	return Seek( 0, SEEK_END );
+	return CSFile::Seek( 0, SEEK_END );
 }
 
-bool CSFile::Write( const void * pData, int iLength )
+bool CSFile::_Write( const void * pData, int iLength )
 {
-    ADDTOCALLSTACK("CSFile::Write");
-    THREAD_UNIQUE_LOCK_SET;
+    ADDTOCALLSTACK("CSFile::_Write");
 
 #ifdef _WIN32
 	DWORD dwWritten;
@@ -354,6 +352,12 @@ bool CSFile::Write( const void * pData, int iLength )
     }
 	return true;
 #endif
+}
+
+bool CSFile::Write(const void* pData, int iLength)
+{
+    ADDTOCALLSTACK("CSFile::Write");
+    THREAD_UNIQUE_LOCK_RETURN(_Write(pData, iLength));
 }
 
 // CSFile:: File name operations.

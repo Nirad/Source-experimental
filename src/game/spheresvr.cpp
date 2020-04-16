@@ -1,6 +1,7 @@
-
-#ifdef _LIBEV
-	#include "../network/linuxev.h"
+#ifdef _WIN32
+	#include "../sphere/ntservice.h"	// g_Service
+	#include <process.h>	// getpid()
+#else
 	#include "../sphere/UnixTerminal.h"
 #endif
 
@@ -8,11 +9,11 @@
 	#define pid_t int
 #endif
 
-#ifdef _WIN32
-	#include "../sphere/ntservice.h"	// g_Service
-	#include <process.h>	// getpid()
+#ifdef _LIBEV
+	#include "../network/linuxev.h"
 #endif
 
+#include "../common/CLog.h"
 #include "../common/CException.h"
 #include "../common/CUOInstall.h"
 #include "../common/sphereversion.h"	// sphere version
@@ -24,8 +25,8 @@
 #include "items/CItemMap.h"
 #include "items/CItemMessage.h"
 #include "components/CCChampion.h"
-#include "../common/CLog.h"
 #include "CScriptProfiler.h"
+#include "CSector.h"
 #include "CServer.h"
 #include "CWorld.h"
 #include "spheresvr.h"
@@ -132,6 +133,13 @@ CWorld			g_World;			// the world. (we save this stuff)
 // Again, game servers stuff.
 CServerConfig	g_Cfg;
 CServer			g_Serv;				// current state, stuff not saved.
+
+#ifdef _WIN32
+	CNTWindow g_NTWindow;
+#else
+	UnixTerminal g_UnixTerminal;
+#endif
+
 CUOInstall		g_Install;
 CVerDataMul		g_VerData;
 CExpression		g_Exp;				// Global script variables.
@@ -762,10 +770,5 @@ int _cdecl main( int argc, char * argv[] )
 	return g_Serv.GetExitFlag();
 }
 
-
-#include "../../network/CNetworkInput.h"
-#include "../../network/CNetworkOutput.h"
-#include "../../network/CNetworkThread.h"
-#include "items/CItemMultiCustom.h"
 
 #include "../tables/classnames.tbl"

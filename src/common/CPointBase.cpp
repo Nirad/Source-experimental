@@ -1,9 +1,9 @@
-#include "../common/resource/blocks/CItemTypeDef.h"
-#include "../common/CLog.h"
 #include "../game/items/CItem.h"
 #include "../game/CSector.h"
 #include "../game/CServer.h"
-#include "../game/CWorld.h"
+#include "../game/CWorldMap.h"
+#include "resource/blocks/CItemTypeDef.h"
+#include "CLog.h"
 #include "CRect.h"
 #include "CPointBase.h"
 
@@ -122,21 +122,20 @@ void CPointBase::ZeroPoint()
 	m_z = 0;
 	m_map = 0;
 }
+
 int CPointBase::GetDistZ( const CPointBase & pt ) const noexcept
 {
-	return( abs(m_z-pt.m_z));
+	return SphereAbs(m_z - pt.m_z);
 }
-int CPointBase::GetDistZAdj( const CPointBase & pt ) const noexcept
-{
-	return( GetDistZ(pt) / (PLAYER_HEIGHT/2) );
-}
+
 int CPointBase::GetDistBase( const CPointBase & pt ) const noexcept // Distance between points
 {
     // This method is called very frequently, ADDTOCALLSTACK unneededly sucks cpu
     //ADDTOCALLSTACK_INTENSIVE("CPointBase::GetDistBase");
+
 	// Do not consider z or m_map.
-    const int dx = abs(m_x - pt.m_x);
-    const int dy = abs(m_y - pt.m_y);
+    const int dx = SphereAbs(m_x - pt.m_x);
+    const int dy = SphereAbs(m_y - pt.m_y);
 
 	return maximum(dx, dy);
 
@@ -151,6 +150,7 @@ int CPointBase::GetDist( const CPointBase & pt ) const noexcept // Distance betw
 {
     // This method is called very frequently, ADDTOCALLSTACK unneededly sucks cpu
 	//ADDTOCALLSTACK_INTENSIVE("CPointBase::GetDist");
+
 	// Get the basic 2d distance.
 	if ( !pt.IsValidPoint() )
 		return INT16_MAX;
@@ -162,32 +162,30 @@ int CPointBase::GetDist( const CPointBase & pt ) const noexcept // Distance betw
 
 int CPointBase::GetDistSightBase( const CPointBase & pt ) const noexcept // Distance between points based on UO sight
 {
-    ADDTOCALLSTACK("CPointBase::GetDistSightBase");
-	int dx = abs(m_x - pt.m_x);
-	int dy = abs(m_y - pt.m_y);
+	const int dx = SphereAbs(m_x - pt.m_x);
+	const int dy = SphereAbs(m_y - pt.m_y);
 	return maximum(dx, dy);
 }
 
 int CPointBase::GetDistSight( const CPointBase & pt ) const noexcept // Distance between points based on UO sight
 {
-	ADDTOCALLSTACK("CPointBase::GetDistSight");
 	if ( !pt.IsValidPoint() )
 		return INT16_MAX;
 	if ( pt.m_map != m_map )
 		return INT16_MAX;
 
-	return GetDistSightBase(pt);
+	const int dx = SphereAbs(m_x - pt.m_x);
+	const int dy = SphereAbs(m_y - pt.m_y);
+	return maximum(dx, dy);
 }
 
 int CPointBase::GetDist3D( const CPointBase & pt ) const noexcept // Distance between points
 {
-	ADDTOCALLSTACK("CPointBase::GetDist3D");
-	// OK, 1 unit of Z is not the same (real life) distance as 1
-	// unit of X (or Y)
-	int dist = GetDist(pt);
+	// OK, 1 unit of Z is not the same (real life) distance as 1 unit of X (or Y)
+	const int dist = GetDist(pt);
 
 	// Get the deltas and correct the Z for height first
-	int dz = GetDistZAdj(pt); // Take player height into consideration
+	const int dz = (GetDistZ(pt) / (PLAYER_HEIGHT / 2)); // Take player height into consideration
 
 	return maximum(dz, dist);
 	// What the heck?
@@ -198,30 +196,25 @@ int CPointBase::GetDist3D( const CPointBase & pt ) const noexcept // Distance be
 
 bool CPointBase::IsValidZ() const noexcept
 {
-	return ( m_z > -UO_SIZE_Z && m_z < UO_SIZE_Z );
+	return ( (m_z > -UO_SIZE_Z) && (m_z < UO_SIZE_Z) );
 }
 
 bool CPointBase::IsValidXY() const noexcept
 {
-	if ( m_x < 0 || m_x >= g_MapList.GetX(m_map) )
+	if ( (m_x < 0) || (m_y < 0) )
 		return false;
-	if ( m_y < 0 || m_y >= g_MapList.GetY(m_map) )
+	if ( (m_x >= g_MapList.GetMapSizeX(m_map)) || (m_y >= g_MapList.GetMapSizeY(m_map)) )
 		return false;
 	return true;
 }
 
-bool CPointBase::IsValidPoint() const noexcept
-{
-	return ( IsValidXY() && IsValidZ() );
-}
-
 bool CPointBase::IsCharValid() const noexcept
 {
-	if ( m_z <= -UO_SIZE_Z || m_z >= UO_SIZE_Z )
+	if ( (m_z <= -UO_SIZE_Z) || (m_z >= UO_SIZE_Z) )
 		return false;
-	if (m_x <= 0 || m_x >= (short)(g_MapList.GetX(m_map)))
+	if ((m_x <= 0) || (m_y <= 0))
 		return false;
-	if (m_y <= 0 || m_y >= (short)(g_MapList.GetY(m_map)))
+	if ((m_x >= g_MapList.GetMapSizeX(m_map)) || (m_y >= g_MapList.GetMapSizeY(m_map)))
 		return false;
 	return true;
 }
@@ -230,13 +223,13 @@ void CPointBase::ValidatePoint()
 {
 	if ( m_x < 0 )
 		m_x = 0;
-    const short iMaxX = (short)g_MapList.GetX(m_map);
+    const short iMaxX = (short)g_MapList.GetMapSizeX(m_map);
 	if (m_x >= iMaxX)
 		m_x = iMaxX - 1;
 
 	if ( m_y < 0 )
 		m_y = 0;
-    const short iMaxY = (short)g_MapList.GetY(m_map);
+    const short iMaxY = (short)g_MapList.GetMapSizeY(m_map);
 	if (m_y >= iMaxY)
 		m_y = iMaxY - 1;
 }
@@ -284,7 +277,7 @@ bool CPointBase::r_WriteVal( lpctstr ptcKey, CSString & sVal ) const
 	if ( !strnicmp( ptcKey, "STATICS", 7 ) )
 	{
 		ptcKey	+= 7;
-		const CServerMapBlock * pBlock = g_World.GetMapBlock( *(this) );
+		const CServerMapBlock * pBlock = CWorldMap::GetMapBlock( *(this) );
 		if ( !pBlock ) return false;
 
 		if ( *ptcKey == '\0' )
@@ -634,7 +627,7 @@ bool CPointBase::r_WriteVal( lpctstr ptcKey, CSString & sVal ) const
 
 			if ( *ptcKey ) iDistance = Exp_GetVal(ptcKey);
 			if ( *ptcKey ) bCheckMulti = Exp_GetVal(ptcKey) != 0;
-			sVal.FormatVal( g_World.IsItemTypeNear(*this, static_cast<IT_TYPE>(iType), iDistance, bCheckMulti));
+			sVal.FormatVal( CWorldMap::IsItemTypeNear(*this, static_cast<IT_TYPE>(iType), iDistance, bCheckMulti));
 			break;
 		}
 		case PT_REGION:
@@ -691,14 +684,14 @@ bool CPointBase::r_WriteVal( lpctstr ptcKey, CSString & sVal ) const
 		}
 		default:
 		{
-			const CUOMapMeter * pMeter = g_World.GetMapMeter(*this);
+			const CUOMapMeter * pMeter = CWorldMap::GetMapMeter(*this);
 			if ( pMeter )
 			{
 				switch( index )
 				{
 					case PT_TYPE:
 					{
-						CItemTypeDef * pTypeDef = g_World.GetTerrainItemTypeDef( pMeter->m_wTerrainIndex );
+						CItemTypeDef * pTypeDef = CWorldMap::GetTerrainItemTypeDef( pMeter->m_wTerrainIndex );
 						if ( pTypeDef != nullptr )
 							sVal = pTypeDef->GetResourceName();
 						else
@@ -881,17 +874,17 @@ CSector * CPointBase::GetSector() const
 	if ( !IsValidXY() )
 	{
 		g_Log.Event(LOGL_ERROR, "Point(%d,%d): trying to get a sector for point on map #%d out of bounds for this map(%d,%d). Defaulting to sector 0 of the map.\n",
-			m_x, m_y, m_map, g_MapList.GetX(m_map), g_MapList.GetY(m_map));
-		return g_World.GetSector(m_map, 0);
+			m_x, m_y, m_map, g_MapList.GetMapSizeX(m_map), g_MapList.GetMapSizeY(m_map));
+		return CWorldMap::GetSector(m_map, 0);
 	}
 	// Get the world Sector we are in.
     const int iSectorSize = g_MapList.GetSectorSize(m_map);
-	return g_World.GetSector(m_map, ((m_y / iSectorSize * g_MapList.GetSectorCols(m_map)) + ( m_x / iSectorSize)));
+	return CWorldMap::GetSector(m_map, ((m_y / iSectorSize * g_MapList.GetSectorCols(m_map)) + ( m_x / iSectorSize)));
 }
 
 CRegion * CPointBase::GetRegion( dword dwType ) const
 {
-	ADDTOCALLSTACK("CPointBase::GetRegion");
+	ADDTOCALLSTACK_INTENSIVE("CPointBase::GetRegion");
 	// What region in the current CSector am i in ?
 	// We only need to update this every 8 or so steps ?
 	// REGION_TYPE_AREA
@@ -907,7 +900,7 @@ CRegion * CPointBase::GetRegion( dword dwType ) const
 
 size_t CPointBase::GetRegions( dword dwType, CRegionLinks *pRLinks ) const
 {
-	ADDTOCALLSTACK("CPointBase::GetRegions");
+	ADDTOCALLSTACK_INTENSIVE("CPointBase::GetRegions");
 	if ( !IsValidPoint() )
 		return 0;
 

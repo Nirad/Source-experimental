@@ -126,6 +126,10 @@ common/CException.cpp
 common/CException.h
 common/CExpression.cpp
 common/CExpression.h
+common/CFloatMath.cpp
+common/CFloatMath.h
+common/CLocalVarsExtra.cpp
+common/CLocalVarsExtra.h
 common/CLog.cpp
 common/CLog.h
 common/CServerMap.cpp
@@ -162,8 +166,6 @@ common/CUOInstall.cpp
 common/CUOInstall.h
 common/CVarDefMap.cpp
 common/CVarDefMap.h
-common/CVarFloat.cpp
-common/CVarFloat.h
 common/datatypes.h
 common/sphereproto.h
 common/sphereversion.h
@@ -235,6 +237,9 @@ common/sphere_library/CSFileText.h
 common/sphere_library/CSMemBlock.cpp
 common/sphere_library/CSMemBlock.h
 common/sphere_library/CSObjArray.h
+common/sphere_library/CSObjCont.cpp
+common/sphere_library/CSObjCont.h
+common/sphere_library/CSObjContRec.h
 common/sphere_library/CSObjList.cpp
 common/sphere_library/CSObjList.h
 common/sphere_library/CSObjListRec.h
@@ -302,19 +307,29 @@ game/CServerDef.cpp
 game/CServerDef.h
 game/CServerTime.cpp
 game/CServerTime.h
-game/CTimedFunction.cpp
-game/CTimedFunction.h
+game/CTimedFunctionHandler.cpp
+game/CTimedFunctionHandler.h
+game/CTimedFunctions.cpp
+game/CTimedFunctions.h
 game/CTimedObject.cpp
 game/CTimedObject.h
 game/CWorld.cpp
 game/CWorld.h
 game/CWorldCache.cpp
-game/CWorldClock.h
+game/CWorldCache.h
 game/CWorldClock.cpp
-game/CWorldTick.h
-game/CWorldTick.cpp
+game/CWorldClock.h
+game/CWorldComm.cpp
+game/CWorldComm.h
+game/CWorldGameTime.cpp
+game/CWorldGameTime.h
 game/CWorldImport.cpp
 game/CWorldMap.cpp
+game/CWorldMap.h
+game/CWorldTicker.cpp
+game/CWorldTicker.h
+game/CWorldTickingList.cpp
+game/CWorldTickingList.h
 game/game_enums.h
 game/game_macros.h
 game/spheresvr.cpp
@@ -356,6 +371,7 @@ game/items/CItemStone.cpp
 game/items/CItemStone.h
 game/items/CItemVendable.cpp
 game/items/CItemVendable.h
+game/items/item_types.h
 )
 SOURCE_GROUP (game\\items FILES ${items_SRCS})
 
@@ -549,4 +565,6 @@ sphereCrypt.ini
 
 INCLUDE_DIRECTORIES (
 common/mysql/
+common/flat_containers/
+common/parallel_hashmap/
 )

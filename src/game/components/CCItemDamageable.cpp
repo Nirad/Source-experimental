@@ -1,7 +1,10 @@
 
 #include "CCItemDamageable.h"
+#include "../CServer.h"
 #include "../CObjBase.h"
-#include "../CWorld.h"
+#include "../CWorldGameTime.h"
+#include "../CWorldMap.h"
+#include "../CWorldTickingList.h"
 #include "../chars/CChar.h"
 #include "../clients/CClient.h"
 
@@ -12,13 +15,13 @@ CCItemDamageable::CCItemDamageable(CItem * pLink) : CComponent(COMP_ITEMDAMAGEAB
     _iCurHits = 0;
     _iMaxHits = 0;
     _iTimeLastUpdate = 0;
-    g_World._Ticker.m_ObjStatusUpdates.emplace(pLink);
+    _fNeedUpdate = true;
+    CWorldTickingList::AddObjStatusUpdate(pLink);
 }
 
 CCItemDamageable::~CCItemDamageable()
 {
-    std::shared_lock<std::shared_mutex> lock_su(g_World._Ticker.m_ObjStatusUpdates.THREAD_CMUTEX);
-    g_World._Ticker.m_ObjStatusUpdates.erase(GetLink());
+    CWorldTickingList::DelObjStatusUpdate(GetLink());
 }
 
 CItem * CCItemDamageable::GetLink() const
@@ -66,14 +69,14 @@ void CCItemDamageable::OnTickStatsUpdate()
     {
         return;
     }
-    const int64 iCurtime = g_World.GetCurrentTime().GetTimeRaw();
+    const int64 iCurtime = CWorldGameTime::GetCurrentTime().GetTimeRaw();
 
     if (_iTimeLastUpdate + g_Cfg._iItemHitpointsUpdate < iCurtime)
     {
         _iTimeLastUpdate = iCurtime;
 
         CItem *pItem = static_cast<CItem*>(GetLink());
-        CWorldSearch AreaChars(GetLink()->GetTopPoint(), UO_MAP_VIEW_SIZE_DEFAULT);
+        CWorldSearch AreaChars(pItem->GetTopPoint(), UO_MAP_VIEW_SIZE_DEFAULT);
         AreaChars.SetSearchSquare(true);
         CChar *pChar = nullptr;
         for (;;)

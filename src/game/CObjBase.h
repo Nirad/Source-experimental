@@ -34,15 +34,16 @@ private:
 protected:
 	CResourceRef m_BaseRef;     // Pointer to the resource that describes this type.
 
-    int _iRunningTriggerId;     // Current trigger being run on this object. Used to prevent the same trigger being called over and over.
-    CSString _sRunningTrigger;
-    int _iCallingObjTriggerId;  // I am running a trigger called via TRIGGER (CallPersonalTrigger method). In which trigger (OF THIS SAME OBJECT) was this call executed?
+    std::string _sRunningTrigger;   // Name of the running trigger (can be custom!) [use std::string instead of CSString because the former is allocated on-demand]
+    short _iRunningTriggerId;       // Current trigger being run on this object. Used to prevent the same trigger being called over and over.
+    short _iCallingObjTriggerId;    // I am running a trigger called via TRIGGER (CallPersonalTrigger method). In which trigger (OF THIS SAME OBJECT) was this call executed?
 
 public:
     static const char *m_sClassName;
+    static dword sm_iCount;    // how many total objects in the world ?
 
-    size_t m_iCreatedResScriptIdx;	// index in g_Cfg.m_ResourceFiles of the script file where this obj was created
-    int m_iCreatedResScriptLine;	// line in the script file where this obj was created
+    int _iCreatedResScriptIdx;	// index in g_Cfg.m_ResourceFiles of the script file where this obj was created
+    int _iCreatedResScriptLine;	// line in the script file where this obj was created
 
     CVarDefMap m_TagDefs;		// attach extra tags here.
     CVarDefMap m_BaseDefs;		// New Variable storage system
@@ -54,16 +55,54 @@ public:
     word	m_defenseBase;	    // Armor for IsArmor items
     word	m_defenseRange;     // variable range of defense.
     int 	m_ModMaxWeight;		// ModMaxWeight prop.
+
     CUID 	_uidSpawn;          // SpawnItem for this item
 
     CResourceRefArray m_OEvents;
-    static dword sm_iCount;    // how many total objects in the world ?
+    
+public:
+    explicit CObjBase(bool fItem);
+    virtual ~CObjBase();
+private:
+    CObjBase(const CObjBase& copy);
+    CObjBase& operator=(const CObjBase& other);
 
+protected:
+    /**
+     * @fn  virtual void CObjBase::DeletePrepare();
+     *
+     * @brief   Prepares to delete.
+     */
+    virtual void DeletePrepare();
+
+    void DeleteCleanup(bool fForce);
+
+public:
+    virtual bool IsDeleted() const override;
+
+    /**
+     * @fn  virtual void CObjBase::Delete(bool bforce = false);
+     *
+     * @brief   Deletes this CObjBase from game (doesn't delete the raw class instance).
+     *
+     * @param   bForce  Force deletion.
+     *
+     * @return  Was deleted.
+     */
+    virtual bool Delete(bool fForce = false);
+
+    /**
+     * @fn  virtual void CObjBase::DupeCopy( const CObjBase * pObj );
+     *
+     * @brief   Dupe copy.
+     *
+     * @param   pObj    The object.
+     */
+    virtual void DupeCopy(const CObjBase* pObj); // overridden by CItem
+
+public:
 	/**
-	* @fn  CBaseBaseDef * CObjBase::Base_GetDef() const;
-	*
 	* @brief   Base get definition.
-	*
 	* @return  null if it fails, else a pointer to a CBaseBaseDef.
 	*/
 	CBaseBaseDef * Base_GetDef() const
@@ -90,6 +129,8 @@ public:
 		return (GetCanFlags() & dwCan);
 	}
 
+    bool IsRunningTrigger() const;
+
 	/**
 	* @fn  inline bool CObjBase::CallPersonalTrigger(tchar * pArgs, CTextConsole * pSrc, TRIGRET_TYPE & trResult, bool bFull);
 	*
@@ -103,12 +144,6 @@ public:
 	*/
 	bool CallPersonalTrigger(tchar * pArgs, CTextConsole * pSrc, TRIGRET_TYPE & trResult);
 
-    /**
-     * @fn  virtual void CObjBase::DeletePrepare();
-     *
-     * @brief   Prepares to delete.
-     */
-	virtual void DeletePrepare();
 
 public:
 
@@ -165,7 +200,7 @@ public:
     *@param fZero If the prop val is an empty string, return "0" instead.
     *@param pBaseCompProps If nullptr and the prop doesn't exist, stop. Otherwise, this should point to the same type of CComponentProps, but in the object's CBaseBaseDef. So, check if the Base Property exists
     */
-    CSString GetPropStr( const CComponentProps* pCompProps, int iPropIndex, bool fZero, const CComponentProps* pBaseCompProps = nullptr ) const;
+    CSString GetPropStr( const CComponentProps* pCompProps, CComponentProps::PropertyIndex_t iPropIndex, bool fZero, const CComponentProps* pBaseCompProps = nullptr ) const;
 
     /**
     *@brief Returns the value of the string-type prop from the CComponentProps
@@ -174,7 +209,7 @@ public:
     *@param fZero If the prop val is an empty string, return "0" instead
     *@param fDef If true, if the prop wasn't found, check the Base Prop (in my CBaseBaseDef).
     */
-    CSString GetPropStr( COMPPROPS_TYPE iCompPropsType, int iPropIndex, bool fZero, bool fDef = false ) const;
+    CSString GetPropStr( COMPPROPS_TYPE iCompPropsType, CComponentProps::PropertyIndex_t iPropIndex, bool fZero, bool fDef = false ) const;
 
     /**
     *@brief Returns the value of the numerical-type prop from the CComponentProps. Faster than the variant accepting a COMPPROPS_TYPE if you need to retrieve multiple props from the same CComponentProps
@@ -182,7 +217,7 @@ public:
     *@param iPropIndex The index (enum) of the property for that CComponentProps
     *@param pBaseCompProps If nullptr and the prop doesn't exist, stop. Otherwise, this should point to the same type of CComponentProps, but in the object's CBaseBaseDef. So, check if the Base Property exists
     */
-    CComponentProps::PropertyValNum_t GetPropNum( const CComponentProps* pCompProps, int iPropIndex, const CComponentProps* pBaseCompProps = nullptr ) const;
+    CComponentProps::PropertyValNum_t GetPropNum( const CComponentProps* pCompProps, CComponentProps::PropertyIndex_t iPropIndex, const CComponentProps* pBaseCompProps = nullptr ) const;
 
     /**
     *@brief Returns the value of the numerical-type prop from the CComponentProps.
@@ -190,7 +225,7 @@ public:
     *@param iPropIndex The index (enum) of the property for that CComponentProps
     *@param fDef If true, if the prop wasn't found, check the Base Prop (in my CBaseBaseDef).
     */
-    CComponentProps::PropertyValNum_t GetPropNum( COMPPROPS_TYPE iCompPropsType, int iPropIndex, bool fDef = false ) const;
+    CComponentProps::PropertyValNum_t GetPropNum( COMPPROPS_TYPE iCompPropsType, CComponentProps::PropertyIndex_t iPropIndex, bool fDef = false ) const;
 
     /**
     *@brief Sets the value of the string-type prop from the CComponentProps. Faster than the variant accepting a COMPPROPS_TYPE if you need to set multiple props from the same CComponentProps
@@ -199,7 +234,7 @@ public:
     *@param ptcVal The property value
     *@param fDeleteZero If the prop val is an empty string, delete the prop
     */
-    void SetPropStr( CComponentProps* pCompProps, int iPropIndex, lpctstr ptcVal, bool fDeleteZero = true);
+    void SetPropStr( CComponentProps* pCompProps, CComponentProps::PropertyIndex_t iPropIndex, lpctstr ptcVal, bool fDeleteZero = true);
 
     /**
     *@brief Sets the value of the string-type prop from the CComponentProps.
@@ -208,7 +243,7 @@ public:
     *@param ptcVal The property value
     *@param fDeleteZero If the prop val is an empty string, delete the prop
     */
-    void SetPropStr( COMPPROPS_TYPE iCompPropsType, int iPropIndex, lpctstr ptcVal, bool fDeleteZero = true);
+    void SetPropStr( COMPPROPS_TYPE iCompPropsType, CComponentProps::PropertyIndex_t iPropIndex, lpctstr ptcVal, bool fDeleteZero = true);
 
     /**
     *@brief Sets the value of the numerical-type prop from the CComponentProps. Faster than the variant accepting a COMPPROPS_TYPE if you need to set multiple props from the same CComponentProps
@@ -216,7 +251,7 @@ public:
     *@param iPropIndex The index (enum) of the property for that CComponentProps
     *@param iVal The property value
     */
-    void SetPropNum( CComponentProps* pCompProps, int iPropIndex, CComponentProps::PropertyValNum_t iVal );
+    void SetPropNum( CComponentProps* pCompProps, CComponentProps::PropertyIndex_t iPropIndex, CComponentProps::PropertyValNum_t iVal );
 
     /*
     *@brief Sets the value of the numerical-type prop from the CComponentProps.
@@ -224,7 +259,7 @@ public:
     *@param iPropIndex The index (enum) of the property for that CComponentProps
     *@param iVal The property value
     */
-    void SetPropNum( COMPPROPS_TYPE iCompPropsType, int iPropIndex, CComponentProps::PropertyValNum_t iVal );
+    void SetPropNum( COMPPROPS_TYPE iCompPropsType, CComponentProps::PropertyIndex_t iPropIndex, CComponentProps::PropertyValNum_t iVal );
 
     /**
     *@brief Sums a number to the value of the numerical-type prop from the CComponentProps. Faster than the variant accepting a COMPPROPS_TYPE if you need to set multiple props from the same CComponentProps
@@ -234,7 +269,7 @@ public:
     *@param pBaseCompProps If nullptr and the prop doesn't exist, consider 0 as the previous value. Otherwise, this should point to the same type of CComponentProps, but in the object's CBaseBaseDef.
     *       So, check if the Base Property exists and use its value as the previous value. If it doesn't exists, use 0.
     */
-    void ModPropNum( CComponentProps* pCompProps, int iPropIndex, CComponentProps::PropertyValNum_t iMod, const CComponentProps* pBaseCompProps = nullptr);
+    void ModPropNum( CComponentProps* pCompProps, CComponentProps::PropertyIndex_t iPropIndex, CComponentProps::PropertyValNum_t iMod, const CComponentProps* pBaseCompProps = nullptr);
 
     /**
     *@brief Sums a number to the value of the numerical-type prop from the CComponentProps.
@@ -243,7 +278,7 @@ public:
     *@param iMod The signed number to sum to the prop value
     *@param fBaseDef If false and the prop doesn't exist, consider 0 as the previous value. Otherwise, check if the Base Property exists and use its value as the previous value. If it doesn't exists, use 0.
     */
-    void ModPropNum( COMPPROPS_TYPE iCompPropsType, int iPropIndex, CComponentProps::PropertyValNum_t iMod, bool fBaseDef = false);
+    void ModPropNum( COMPPROPS_TYPE iCompPropsType, CComponentProps::PropertyIndex_t iPropIndex, CComponentProps::PropertyValNum_t iMod, bool fBaseDef = false);
 
     /**
      * @fn  lpctstr CObjBase::GetDefStr( lpctstr ptcKey, bool fZero = false, bool fDef = false ) const;
@@ -427,16 +462,6 @@ public:
      */
 	void DeleteKey( lpctstr ptcKey );
 
-protected:
-
-    /**
-     * @fn  virtual void CObjBase::DupeCopy( const CObjBase * pObj );
-     *
-     * @brief   Dupe copy.
-     *
-     * @param   pObj    The object.
-     */
-	void DupeCopy( const CObjBase * pObj );
 
 public:
 
@@ -481,16 +506,6 @@ public:
      */
 	virtual int IsWeird() const;
 
-    /**
-     * @fn  virtual void CObjBase::Delete(bool bforce = false);
-     *
-     * @brief   Deletes this CObjBase from game (doesn't delete the raw class instance).
-     *
-     * @param   bforce  Force deletion.
-     */
-	virtual void Delete(bool fforce = false);
-
-
 	// Accessors
 
     /**
@@ -512,24 +527,6 @@ public:
      * @param   fItem   true to item.
      */
 	void SetUID( dword dwVal, bool fItem );
-
-    /**
-     * @fn  CObjBase* CObjBase::GetNext() const;
-     *
-     * @brief   Gets the next item.
-     *
-     * @return  null if it fails, else the next.
-     */
-	CObjBase* GetNext() const;
-
-    /**
-     * @fn  CObjBase* CObjBase::GetPrev() const;
-     *
-     * @brief   Gets the previous item.
-     *
-     * @return  null if it fails, else the previous.
-     */
-	CObjBase* GetPrev() const;
 
     /**
      * @fn  virtual lpctstr CObjBase::GetName() const;
@@ -594,7 +591,6 @@ protected:
      */
 	void SetHueAlt( HUE_TYPE wHue );
 
-public:
 
 public:
 
@@ -715,10 +711,6 @@ public:
 	virtual bool r_LoadVal( CScript & s ) override;
 	virtual bool r_WriteVal( lpctstr ptcKey, CSString &sVal, CTextConsole * pSrc = nullptr, bool fNoCallParent = false, bool fNoCallChildren = false ) override;
 	virtual bool r_Verb( CScript & s, CTextConsole * pSrc ) override;	// some command on this object as a target
-    inline virtual bool IsDeleted() const override
-    {
-        return CObjBaseTemplate::IsDeleted();
-    }
 
     /**
      * @fn  void CObjBase::Emote(lpctstr pText, CClient * pClientExclude = nullptr, bool fPossessive = false);
@@ -753,7 +745,7 @@ public:
      * @param   mode    The mode.
      * @param   font    The font.
      */
-	virtual void Speak( lpctstr pText, HUE_TYPE wHue = HUE_TEXT_DEF, TALKMODE_TYPE mode = TALKMODE_SAY, FONT_TYPE font = FONT_NORMAL ) const;
+	virtual void Speak( lpctstr pText, HUE_TYPE wHue = HUE_TEXT_DEF, TALKMODE_TYPE mode = TALKMODE_SAY, FONT_TYPE font = FONT_NORMAL );
 
     /**
      * @fn  virtual void CObjBase::SpeakUTF8( lpctstr pText, HUE_TYPE wHue= HUE_TEXT_DEF, TALKMODE_TYPE mode= TALKMODE_SAY, FONT_TYPE font = FONT_NORMAL, CLanguageID lang = 0 );
@@ -766,7 +758,7 @@ public:
      * @param   font    The font.
      * @param   lang    The language.
      */
-	virtual void SpeakUTF8( lpctstr pText, HUE_TYPE wHue= HUE_TEXT_DEF, TALKMODE_TYPE mode= TALKMODE_SAY, FONT_TYPE font = FONT_NORMAL, CLanguageID lang = 0 ) const;
+	virtual void SpeakUTF8( lpctstr pText, HUE_TYPE wHue= HUE_TEXT_DEF, TALKMODE_TYPE mode= TALKMODE_SAY, FONT_TYPE font = FONT_NORMAL, CLanguageID lang = 0 );
 
     /**
      * @fn  virtual void CObjBase::SpeakUTF8Ex( const nword * pText, HUE_TYPE wHue, TALKMODE_TYPE mode, FONT_TYPE font, CLanguageID lang );
@@ -779,7 +771,7 @@ public:
      * @param   font    The font.
      * @param   lang    The language.
      */
-	virtual void SpeakUTF8Ex( const nword * pText, HUE_TYPE wHue, TALKMODE_TYPE mode, FONT_TYPE font, CLanguageID lang ) const;
+	virtual void SpeakUTF8Ex( const nword * pText, HUE_TYPE wHue, TALKMODE_TYPE mode, FONT_TYPE font, CLanguageID lang );
 
     /**
      * @fn  void CObjBase::RemoveFromView( CClient * pClientExclude = nullptr , bool fHardcoded = true );
@@ -867,16 +859,14 @@ public:
      *
      * @param   pClientExclude  Do not send to this CClient.
      */
-	virtual void Update(const CClient * pClientExclude = nullptr)
-		= 0;
+	virtual void Update(const CClient * pClientExclude = nullptr) = 0;
 
     /**
      * @fn  virtual void CObjBase::Flip() = 0;
      *
      * @brief   Flips this object.
      */
-	virtual void Flip()
-		= 0;
+	virtual void Flip()	= 0;
 
     /**
      * @fn  virtual bool CObjBase::OnSpellEffect( SPELL_TYPE spell, CChar * pCharSrc, int iSkillLevel, CItem * pSourceItem, bool bReflecting = false ) = 0;
@@ -907,13 +897,6 @@ public:
      * @return  A TRIGRET_TYPE.
      */
 	virtual TRIGRET_TYPE Spell_OnTrigger( SPELL_TYPE spell, SPTRIG_TYPE stage, CChar * pSrc, CScriptTriggerArgs * pArgs );
-
-public:
-	explicit CObjBase( bool fItem );
-	virtual ~CObjBase();
-private:
-	CObjBase(const CObjBase& copy);
-	CObjBase& operator=(const CObjBase& other);
 
 public:
 	//	Some global object variables
@@ -1096,7 +1079,7 @@ enum WAR_SWING_TYPE	// m_Act_War_Swing_State
     WAR_SWING_EQUIPPING_NOWAIT = 10 // Special return value for CChar::Fight_Hit, DON'T USE IT IN SCRIPTS!
 };
 
-enum CTRIG_TYPE
+enum CTRIG_TYPE : short
 {
 	CTRIG_AAAUNUSED		= 0,
 	CTRIG_AfterClick,       // I'm not yet clicked, name should be generated before.
@@ -1300,17 +1283,5 @@ enum CTRIG_TYPE
  */
 DIR_TYPE GetDirStr( lpctstr pszDir );
 
-
-/* Inline Methods Definitions */
-
-inline CObjBase* CObjBase::GetPrev() const
-{
-	return static_cast <CObjBase*>(CSObjListRec::GetPrev());
-}
-
-inline CObjBase* CObjBase::GetNext() const
-{
-	return static_cast <CObjBase*>(CSObjListRec::GetNext());
-}
 
 #endif // _INC_COBJBASE_H

@@ -17,9 +17,11 @@
 #include "../common/resource/CValueDefs.h"
 #include "../common/CExpression.h"
 #include "../common/CServerMap.h"
+#include "../common/CTextConsole.h"
 #include "../common/sphereproto.h"
 #include "CRegion.h"
 #include "game_enums.h"
+#include <map>
 
 
 class CAccount;
@@ -139,12 +141,16 @@ enum MAGICFLAGS_TYPE
 
 enum REVEALFLAGS_TYPE
 {
-    REVEALF_DETECTINGHIDDEN      = 0x001,    ///* Reveal Spell with Detecting Hidden Skill.
-    REVEALF_LOOTINGSELF          = 0x002,    ///* Reveal when looting self bodies.
-    REVEALF_LOOTINGOTHERS        = 0x004,    ///* Reveal when looting bodies of other Players or NPCs.
-    REVEALF_SPEAK                = 0x008,    ///* Reveal when speaking.
-    REVEALF_SPELLCAST            = 0x010,    ///* Reveal when starting to cast a Spell.
-    REVEALF_OSILIKEPERSONALSPACE = 0x020     ///* Do not reveal when a character enters on personal space.
+    REVEALF_DETECTINGHIDDEN      = 0x0001,    // Reveal Spell with Detecting Hidden Skill.
+    REVEALF_LOOTINGSELF          = 0x0002,    // Reveal when looting self bodies.
+    REVEALF_LOOTINGOTHERS        = 0x0004,    // Reveal when looting bodies of other Players or NPCs.
+    REVEALF_SPEAK                = 0x0008,    // Reveal when speaking.
+    REVEALF_SPELLCAST            = 0x0010,    // Reveal when starting to cast a Spell.
+    REVEALF_OSILIKEPERSONALSPACE = 0x0020,    // Do not reveal when a character enters on personal space.
+    REVEALF_SNOOPING             = 0x0040,    // Do not reveal while a character snooping.
+    REVEALF_STEALING             = 0x0080,    // Do not reveal while a character stealing.
+    REVEALF_STEALING_SUCCESS     = 0x0100,    // Reveal if stealing successfully finished.
+    REVEALF_STEALING_FAIL        = 0x0200     // Reveal if stealing failed.
 };
 
 enum TOOLTIPMODE_TYPE
@@ -189,8 +195,8 @@ public:
 	bool m_fUseNTService;       // Start this as a system service on Win2000, XP, NT
 	int	 m_fUseHTTP;            // Use the built in http server
 	bool m_fUseAuthID;          // Use the OSI AuthID to avoid possible hijack to game server.
-	int64  m_iMapCacheTime;     // Time in sec to keep unused map data..
-	int	 _iSectorSleepDelay;    // The mask for how long sectors will sleep.
+	int64  _iMapCacheTime;     // Time in sec to keep unused map data..
+	int64  _iSectorSleepDelay;    // The mask for how long sectors will sleep.
 	bool m_fUseMapDiffs;        // Whether or not to use map diff files.
 
 	CSString m_sWorldBaseDir;   // save\" = world files go here.
@@ -662,7 +668,7 @@ public:
      *
      * @return  The found stat key.
      */
-	static STAT_TYPE FindStatKey( lpctstr ptcKey );
+	static STAT_TYPE GetStatKey( lpctstr ptcKey );
 
     /**
      * @brief   Returns the Stat name for the given stat key (STAT_STR = "STR", ...).
@@ -960,7 +966,7 @@ typedef std::map<dword,dword> KRGumpsMap;
 	dword GetKRDialogMap(dword idKRDialog);
 	dword GetKRDialog(dword rid);
 
-	bool GenerateDefname(tchar *pObjectName, size_t iInputLength, lpctstr pPrefix, tchar *pOutput, bool bCheckConflict = true, CVarDefMap* vDefnames = nullptr);
+	bool GenerateDefname(tchar *pObjectName, size_t iInputLength, lpctstr pPrefix, TemporaryString *pOutput, bool fCheckConflict = true, CVarDefMap* vDefnames = nullptr);
 	bool DumpUnscriptedItems(CTextConsole * pSrc, lpctstr pszFilename);
 } g_Cfg;
 

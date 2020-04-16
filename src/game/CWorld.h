@@ -6,17 +6,19 @@
 #ifndef _INC_CWORLD_H
 #define _INC_CWORLD_H
 
+#include "../common/sphere_library/CSObjCont.h"
+#include "../common/sphere_library/CSObjList.h"
 #include "../common/CScript.h"
 #include "../common/CUID.h"
-#include "items/CItemStone.h"
-#include "CSector.h"
 #include "CWorldCache.h"
 #include "CWorldClock.h"
-#include "CWorldTick.h"
+#include "CWorldTicker.h"
 
-class CObjBase;
 class CItemTypeDef;
+class CSector;
 class CObjBaseTemplate;
+class CObjBase;
+class CItemStone;
 
 
 enum IMPFLAGS_TYPE	// IMPORT and EXPORT flags.
@@ -39,11 +41,12 @@ class CWorldThread
 	// as well as those just created here. (but may not be here anymore)
 
 protected:
-	std::vector<CObjBase*> m_UIDs;  // all the UID's in the World. CChar and CItem.
-	int m_iUIDIndexLast;            // remeber the last index allocated so we have more even usage.
+	CObjBase**	_ppUIDObjArray;		// Array containing all the UID's in the World. CChar and CItem.
+	size_t		_uiUIDObjArraySize;
+	dword		_dwUIDIndexLast;	// remeber the last index allocated so we have more even usage.
 
-	dword	*m_FreeUIDs;		//	list of free uids available
-	dword	m_FreeOffset;		//	offset of the first free element
+	dword*		_pdwFreeUIDs;		// list of free uids available
+	dword		_dwFreeUIDOffset;		// offset of the first free element
 
 public:
 	static const char *m_sClassName;
@@ -53,8 +56,9 @@ public:
 	//int m_iUIDIndexBase;		// The start of the uid range that i will allocate from.
 	//int m_iUIDIndexMaxQty;	// The max qty of UIDs i can allocate.
 
-	CSObjList m_ObjNew;			// Obj created but not yet placed in the world.
-	CSObjList m_ObjDelete;		// Objects to be deleted.
+	CSObjCont m_ObjNew;			// Obj created but not yet placed in the world.
+	CSObjCont m_ObjDelete;		// Objects to be deleted.
+	CSObjList m_ObjSpecialDelete;
 
 	// Background save. Does this belong here ?
 	CScript m_FileData;			// Save or Load file.
@@ -81,6 +85,7 @@ public:
 	void GarbageCollection_UIDs();
 	void GarbageCollection_New();
 
+	void InitUIDs();
 	void CloseAllUIDs();
 
 public:
@@ -96,16 +101,25 @@ private:
 extern class CWorld : public CScriptObj, public CWorldThread
 {
 	// the world. Stuff saved in *World.SCP
+public:
+	static const char* m_sClassName;
+	
 private:
 	// Clock stuff. how long have we been running ? all i care about.
-	CWorldClock m_Clock;		// the current relative tick time (in milliseconds)
-
-public:
-	// Map cache
-	CWorldCache _Cache;
+	friend class CWorldGameTime;
+	friend CServerTime;
+	CWorldClock _GameClock;		// the current relative tick time (in milliseconds)
 
 	// Ticking world objects
-	CWorldTick _Ticker;
+	friend class CWorldTickingList;
+	friend class CTimedFunctions;
+	CWorldTicker _Ticker;
+
+	// Map cache
+	friend class CServer;
+	friend class CWorldMap;
+	CWorldCache _Cache;	
+	
 
 private:
 	// Special purpose timers.
@@ -119,12 +133,10 @@ private:
 	llong	m_savetimer; // Time it takes to save
 
 public:
-	static const char *m_sClassName;
 	// World data.
 	CSector **m_Sectors;
 	uint m_SectorsQty;
 
-public:
 	int m_iSaveCountID;			// Current archival backup id. Whole World must have this same stage id
 	int m_iLoadVersion;			// Previous load version. (only used during load of course)
 	int m_iPrevBuild;			// Previous __GITREVISION__
@@ -170,85 +182,6 @@ public:
 	virtual bool r_GetRef(lpctstr& ptcKey, CScriptObj*& pRef) override;
 
 
-	// Time
-
-	inline CServerTime GetCurrentTime() const
-	{
-		return m_Clock.GetCurrentTime();  // Time in milliseconds
-	}
-    inline int64 GetTimeDiff(const CServerTime& time) const
-    {
-        // How long till this event
-        // negative = in the past.
-        return time.GetTimeDiff(GetCurrentTime()); // Time in milliseconds
-    }
-    inline int64 GetTimeDiff(int64 time) const
-    {
-        // How long till this event
-        // negative = in the past.
-        return time - GetCurrentTime().GetTimeRaw(); // Time in milliseconds
-    }
-    inline int64 GetCurrentTick() const
-    {
-        return m_Clock.GetCurrentTick();
-    }
-	inline int64 GetTickDiff(int64 iTick) const
-	{
-		return m_Clock.GetCurrentTick() - iTick;
-	}
-
-#define TRAMMEL_SYNODIC_PERIOD 105 // in game world minutes
-#define FELUCCA_SYNODIC_PERIOD 840 // in game world minutes
-#define TRAMMEL_FULL_BRIGHTNESS 2 // light units LIGHT_BRIGHT
-#define FELUCCA_FULL_BRIGHTNESS 6 // light units LIGHT_BRIGHT
-	uint GetMoonPhase( bool fMoonIndex = false ) const;
-	int64 GetNextNewMoon( bool fMoonIndex ) const;
-
-	int64 GetGameWorldTime( int64 basetime ) const;
-    int64 GetGameWorldTime() const	// return game world minutes
-	{
-		return( GetGameWorldTime(GetCurrentTime().GetTimeRaw()));
-	}
-
-
-	// CWorldMap
-
-	CItemTypeDef*	GetTerrainItemTypeDef(dword dwIndex);
-	IT_TYPE			GetTerrainItemType(dword dwIndex);
-
-	const CServerMapBlock* GetMapBlock(const CPointMap& pt) const;
-	const CUOMapMeter* GetMapMeter(const CPointMap& pt) const; // Height of MAP0.MUL at given coordinates
-
-
-	// CSector World Map stuff.
-
-	CSector* GetSector(int map, int i) const;	// gets sector # from one map
-
-	void GetHeightPoint2( const CPointMap & pt, CServerMapBlockState & block, bool fHouseCheck = false );
-	char GetHeightPoint2(const CPointMap & pt, dword & dwBlockFlags, bool fHouseCheck = false); // Height of player who walked to X/Y/OLDZ
-
-	void GetHeightPoint( const CPointMap & pt, CServerMapBlockState & block, bool fHouseCheck = false );
-	char GetHeightPoint( const CPointMap & pt, dword & dwBlockFlags, bool fHouseCheck = false );
-
-	void GetFixPoint( const CPointMap & pt, CServerMapBlockState & block);
-
-	CPointMap FindItemTypeNearby( const CPointMap & pt, IT_TYPE iType, int iDistance = 0, bool fCheckMulti = false, bool fLimitZ = false );
-	bool IsItemTypeNear( const CPointMap & pt, IT_TYPE iType, int iDistance, bool fCheckMulti );
-
-	CPointMap FindTypeNear_Top( const CPointMap & pt, IT_TYPE iType, int iDistance = 0 );
-	bool IsTypeNear_Top( const CPointMap & pt, IT_TYPE iType, int iDistance = 0 );
-	CItem * CheckNaturalResource( const CPointMap & pt, IT_TYPE iType, bool fTest = true, CChar * pCharSrc = nullptr );
-
-
-	// Communication
-
-	void Speak(const CObjBaseTemplate* pSrc, lpctstr pText, HUE_TYPE wHue = HUE_TEXT_DEF, TALKMODE_TYPE mode = TALKMODE_SAY, FONT_TYPE font = FONT_BOLD) const;
-	void SpeakUNICODE(const CObjBaseTemplate* pSrc, const nchar* pText, HUE_TYPE wHue, TALKMODE_TYPE mode, FONT_TYPE font, CLanguageID lang) const;
-
-	void Broadcast(lpctstr pMsg);
-	void __cdecl Broadcastf(lpctstr pMsg, ...) __printfargs(2, 3);
-
-
 	// World stuff
 
 	void OnTick();
@@ -271,39 +204,6 @@ public:
 	lpctstr GetName() const { return( "World" ); }
 
 } g_World;
-
-class CWorldSearch	// define a search of the world.
-{
-private:
-	const CPointMap m_pt;		// Base point of our search.
-	const int m_iDist;			// How far from the point are we interested in
-	bool m_fAllShow;		// Include Even inert items.
-	bool m_fSearchSquare;		// Search in a square (uo-sight distance) rather than a circle (standard distance).
-
-	CObjBase * m_pObj;	// The current object of interest.
-	CObjBase * m_pObjNext;	// In case the object get deleted.
-	bool m_fInertToggle;		// We are now doing the inert items
-
-	CSector * m_pSectorBase;	// Don't search the center sector 2 times.
-	CSector * m_pSector;	// current Sector
-	CRectMap m_rectSector;		// A rectangle containing our sectors we can search.
-	int		m_iSectorCur;		// What is the current Sector index in m_rectSector
-private:
-	bool GetNextSector();
-public:
-	static const char *m_sClassName;
-	explicit CWorldSearch( const CPointMap & pt, int iDist = 0 );
-private:
-	CWorldSearch(const CWorldSearch& copy);
-	CWorldSearch& operator=(const CWorldSearch& other);
-
-public:
-	void SetAllShow( bool fView );
-	void SetSearchSquare( bool fSquareSearch );
-	void RestartSearch();		// Setting current obj to nullptr will restart the search 
-	CChar * GetChar();
-	CItem * GetItem();
-};
 
 
 #endif // _INC_CWORLD_H

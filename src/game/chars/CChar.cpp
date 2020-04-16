@@ -18,8 +18,12 @@
 #include "../components/CCPropsItemChar.h"
 #include "../components/CCSpawn.h"
 #include "../CContainer.h"
+#include "../CSector.h"
 #include "../CServer.h"
 #include "../CWorld.h"
+#include "../CWorldGameTime.h"
+#include "../CWorldMap.h"
+#include "../CWorldTickingList.h"
 #include "../spheresvr.h"
 #include "../triggers.h"
 #include "CChar.h"
@@ -227,11 +231,10 @@ CChar * CChar::CreateBasic(CREID_TYPE baseID) // static
 {
 	ADDTOCALLSTACK("CChar::CreateBasic");
     CChar *pChar = new CChar(baseID);
-    pChar->_pMultiStorage = new CMultiStorage(pChar->GetUID());
 	return pChar;
 }
 
-CChar::CChar( CREID_TYPE baseID ) : CTimedObject(PROFILE_CHARS), CObjBase( false ), 
+CChar::CChar( CREID_TYPE baseID ) : CTimedObject(PROFILE_CHARS), CObjBase( false ),
     m_Skill{}, m_Stat{}
 {
 	g_Serv.StatInc( SERV_STAT_CHARS );	// Count created CChars.
@@ -246,31 +249,30 @@ CChar::CChar( CREID_TYPE baseID ) : CTimedObject(PROFILE_CHARS), CObjBase( false
 
 	if ( g_World.m_fSaveParity )
 		StatFlag_Set(STATF_SAVEPARITY);	// It will get saved next time.
+
 	m_dirFace = DIR_SE;
 	m_fonttype = FONT_NORMAL;
 	m_SpeechHueOverride = 0;
-    _iMaxHouses = g_Cfg._iMaxHousesPlayer;
-    _iMaxShips = g_Cfg._iMaxShipsPlayer;
-    _pMultiStorage = nullptr;
 
     m_exp = 0;
     m_level = 0;
     m_defense = 0;
 	m_height = 0;
 	m_ModMaxWeight = 0;
-    _iRange = RANGE_MAKE(1, 0);   // RangeH = 1; RangeL = 0
+    _uiRange = RANGE_MAKE(1, 0);   // RangeH = 1; RangeL = 0
 
 	m_StepStealth = 0;
 	m_iVisualRange = UO_MAP_VIEW_SIZE_DEFAULT;
 	m_virtualGold = 0;
 
-    m_timeCreate = g_World.GetCurrentTime().GetTimeRaw();
-    m_timeLastHitsUpdate = g_World.GetCurrentTime().GetTimeRaw();
-    _timeNextRegen = m_timeLastHitsUpdate + MSECS_PER_SEC;  // make it regen in one second from now, no need to instant regen.
+	_iTimePeriodicTick = 0;
+    _iTimeCreate = _iTimeLastHitsUpdate = CWorldGameTime::GetCurrentTime().GetTimeRaw();
+    _iTimeNextRegen = _iTimeLastHitsUpdate + MSECS_PER_SEC;  // make it regen in one second from now, no need to instant regen.
     _iRegenTickCount = 0;
 	m_timeLastCallGuards = 0;
 
     m_zClimbHeight = 0;
+	m_fClimbUpdated = false;
 	m_prev_Hue = HUE_DEFAULT;
 	m_prev_id = CREID_INVALID;
 	SetID( baseID );
@@ -296,15 +298,12 @@ CChar::CChar( CREID_TYPE baseID ) : CTimedObject(PROFILE_CHARS), CObjBase( false
 
 	g_World.m_uidLastNewChar = GetUID();	// for script access.
 
-	m_LocalLight = 0;
-	m_fClimbUpdated = false;
-
     // SubscribeComponent Prop Components
     SubscribeComponentProps(new CCPropsChar());
     SubscribeComponentProps(new CCPropsItemChar());
 
     // SubscribeComponent regular Components
-    SubscribeComponent(new CCFaction(this));
+    SubscribeComponent(new CCFaction());
 
     CTimedObject::GoSleep();  // Make it be sleeping at first, to awake it when placing it in the world (errors will show up otherwise).
 
@@ -314,20 +313,10 @@ CChar::CChar( CREID_TYPE baseID ) : CTimedObject(PROFILE_CHARS), CObjBase( false
 // Delete character
 CChar::~CChar()
 {
-    DeletePrepare();    // remove me early so virtuals will work.
+	ADDTOCALLSTACK("CChar::~CChar");
 
-    g_World._Ticker.DelCharTicking(this);
-
-    if (IsStatFlag(STATF_RIDDEN))
-    {
-        CItem * pItem = Horse_GetMountItem();
-        if ( pItem )
-        {
-            pItem->m_itFigurine.m_UID.InitUID();    // unlink it first.
-            pItem->Delete();
-        }
-        StatFlag_Clear(STATF_RIDDEN);
-    }
+	DeleteCleanup(true);
+	ClearContainer();
 
     if (IsClient())    // this should never happen.
     {
@@ -342,17 +331,80 @@ CChar::~CChar()
     }
     Guild_Resign(MEMORY_GUILD);
     Guild_Resign(MEMORY_TOWN);
-    Attacker_RemoveChar();      // Removing me from enemy's attacker list (I asume that if he is on my list, I'm on his one and no one have me on their list if I dont have them)
+    Attacker_RemoveChar();		// Removing me from enemy's attacker list (I asume that if he is on my list, I'm on his one and no one have me on their list if I dont have them)
     if (m_pNPC)
-        NPC_PetClearOwners();   // Clear follower slots on pet owner
+        NPC_PetClearOwners();	// Clear follower slots on pet owner
 
-    Clear();                    // Remove me early so virtuals will work
     ClearNPC();
     ClearPlayer();
-    delete _pMultiStorage;
-    _pMultiStorage = nullptr;
 
     g_Serv.StatDec( SERV_STAT_CHARS );
+}
+
+void CChar::DeleteCleanup(bool fForce)
+{
+	ADDTOCALLSTACK("CChar::DeleteCleanup");
+	CWorldTickingList::DelCharPeriodic(this);
+
+	if (IsStatFlag(STATF_RIDDEN))
+	{
+		CItem* pItem = Horse_GetMountItem();
+		if (pItem)
+		{
+			pItem->m_itFigurine.m_UID.InitUID();    // unlink it first.
+			pItem->Delete(fForce);
+		}
+		StatFlag_Clear(STATF_RIDDEN);
+	}
+}
+
+// Called before Delete()
+// @Destroy can prevent the deletion
+bool CChar::NotifyDelete()
+{
+	ADDTOCALLSTACK("CChar::NotifyDelete");
+	if (IsDeleted())
+		return false;
+
+	if (IsTrigUsed(TRIGGER_DESTROY))
+	{
+		//We can forbid the deletion in here with no pain
+		if (CChar::OnTrigger(CTRIG_Destroy, &g_Serv) == TRIGRET_RET_TRUE)
+			return false;
+	}
+
+	ContentNotifyDelete();
+	return true;
+}
+
+void CChar::DeletePrepare()
+{
+	ADDTOCALLSTACK("CChar::DeletePrepare");
+	ContentDelete(false);	// This object and its contents need to be deleted on the same tick
+	CObjBase::DeletePrepare();
+}
+
+bool CChar::Delete(bool fForce)
+{
+	ADDTOCALLSTACK("CChar::Delete");
+
+	if ((NotifyDelete() == false) && !fForce)
+		return false;
+
+	// Character has been deleted
+	if (IsClient())
+	{
+		CClient* pClient = GetClient();
+		pClient->CharDisconnect();
+		pClient->GetNetState()->markReadClosed();
+	}
+	
+	DeleteCleanup(fForce);
+
+	// Detach from account now
+	ClearPlayer();
+
+	return CObjBase::Delete();
 }
 
 // Client is detaching from this CChar.
@@ -361,11 +413,10 @@ void CChar::ClientDetach()
 	ADDTOCALLSTACK("CChar::ClientDetach");
 
 	// remove all trade windows.
-	CItem *pItemNext = nullptr;
-	for ( CItem *pItem = GetContentHead(); pItem != nullptr; pItem = pItemNext )
+	for (CSObjContRec* pObjRec : GetIterationSafeCont())
 	{
-		pItemNext = pItem->GetNext();
-		if ( pItem->IsType(IT_EQ_TRADE_WINDOW) )
+		CItem* pItem = static_cast<CItem*>(pObjRec);
+		if (pItem->IsType(IT_EQ_TRADE_WINDOW) )
 			pItem->Delete();
 	}
 	if ( !IsClient() )
@@ -386,7 +437,7 @@ void CChar::ClientDetach()
 			pShipItem->Stop();
 	}
 
-    m_pClient = nullptr;	
+    m_pClient = nullptr;
 }
 
 // Client is Attaching to this CChar.
@@ -399,7 +450,7 @@ void CChar::ClientAttach( CClient * pClient )
 		return;
 
 	ASSERT(m_pPlayer);
-	m_pPlayer->m_timeLastUsed = g_World.GetCurrentTime().GetTimeRaw();
+	m_pPlayer->m_timeLastUsed = CWorldGameTime::GetCurrentTime().GetTimeRaw();
 
 	m_pClient = pClient;
 	FixClimbHeight();
@@ -428,7 +479,7 @@ void CChar::SetDisconnected()
         m_pParty->RemoveMember( GetUID(), GetUID() );
         m_pParty = nullptr;
     }
-    g_World._Ticker.DelCharTicking(this);
+    CWorldTickingList::DelCharPeriodic(this);
 
     if ( IsDisconnected() )
         return;
@@ -523,56 +574,19 @@ bool CChar::SetNPCBrain( NPCBRAIN_TYPE NPCBrain )
     return true;
 }
 
-// Called before Delete()
-// @Destroy can prevent the deletion
-bool CChar::NotifyDelete()
-{
-	if ( IsTrigUsed(TRIGGER_DESTROY) )
-	{
-		//We can forbid the deletion in here with no pain
-		if (CChar::OnTrigger(CTRIG_Destroy, &g_Serv) == TRIGRET_RET_TRUE)
-			return false;
-	}
-
-	ContentNotifyDelete();
-	return true;
-}
-
-void CChar::Delete(bool bforce)
-{
-	ADDTOCALLSTACK("CChar::Delete");
-
-	if (( NotifyDelete() == false ) && !bforce)
-		return;
-
-    g_World._Ticker.DelCharTicking(this);
-
-	// Character has been deleted
-	if ( IsClient() )
-	{
-		CClient* pClient = GetClient();
-		pClient->CharDisconnect();
-		pClient->GetNetState()->markReadClosed();
-	}
-
-	// Detach from account now
-	ClearPlayer();
-
-	CObjBase::Delete();
-}
-
 void CChar::GoSleep()
 {
     ADDTOCALLSTACK("CChar::GoSleep");
     ASSERT(!IsSleeping());
-    
-    g_World._Ticker.DelCharTicking(this);   // do not insert into the mutex lock, it access back to this char.
+
+	CWorldTickingList::DelCharPeriodic(this);   // do not insert into the mutex lock, it access back to this char.
 
     THREAD_UNIQUE_LOCK_SET;
     CTimedObject::GoSleep();
 
-    for (CItem *pItem = GetContentHead(); pItem != nullptr; pItem = pItem->GetNext())
-    {
+	for (CSObjContRec* pObjRec : *this)
+	{
+		CItem* pItem = static_cast<CItem*>(pObjRec);
         if (!pItem->IsSleeping())
             pItem->GoSleep();
     }
@@ -582,14 +596,16 @@ void CChar::GoAwake()
 {
     ADDTOCALLSTACK("CChar::GoAwake");
     ASSERT(IsSleeping());
-    THREAD_UNIQUE_LOCK_SET;
 
+	CWorldTickingList::AddCharPeriodic(this, true);
+
+    THREAD_UNIQUE_LOCK_SET;
     CTimedObject::GoAwake();       // Awake it first, otherwise some other things won't work
-    g_World._Ticker.AddCharTicking(this);
     SetTimeout(Calc_GetRandVal(1 * MSECS_PER_SEC));  // make it tick randomly in the next sector, so all awaken NPCs get a different tick time.
 
-    for (CItem *pItem = GetContentHead(); pItem != nullptr; pItem = pItem->GetNext())
-    {
+	for (CSObjContRec* pObjRec : *this)
+	{
+		CItem* pItem = static_cast<CItem*>(pObjRec);
         if (pItem->IsSleeping())
             pItem->GoAwake();
     }
@@ -654,11 +670,6 @@ int CChar::IsWeird() const
 	return 0;
 }
 
-CMultiStorage *CChar::GetMultiStorage()
-{
-    return _pMultiStorage;
-}
-
 // Get the Z we should be at
 char CChar::GetFixZ( const CPointMap& pt, dword dwBlockFlags)
 {
@@ -673,7 +684,7 @@ char CChar::GetFixZ( const CPointMap& pt, dword dwBlockFlags)
 
     height_t iHeightMount = GetHeightMount( false );
 	CServerMapBlockState block( dwBlockFlags, pt.m_z, pt.m_z + m_zClimbHeight + iHeightMount, pt.m_z + m_zClimbHeight + 2, iHeightMount );
-	g_World.GetFixPoint( pt, block );
+	CWorldMap::GetFixPoint( pt, block );
 
 	dwBlockFlags = block.m_Bottom.m_dwBlockFlags;
 	if ( block.m_Top.m_dwBlockFlags )
@@ -978,7 +989,7 @@ void CChar::CreateNewCharCheck()
 	}
 }
 
-bool CChar::DupeFrom( CChar * pChar, bool fNewbieItems )
+bool CChar::DupeFrom(const CChar * pChar, bool fNewbieItems )
 {
 	// CChar part
 	if ( !pChar )
@@ -1004,16 +1015,16 @@ bool CChar::DupeFrom( CChar * pChar, bool fNewbieItems )
 	m_defense = pChar->m_defense;
     m_height = pChar->m_height;
     m_ModMaxWeight = pChar->m_ModMaxWeight;
-    _iRange = pChar->_iRange;
+    _uiRange = pChar->_uiRange;
 
 	m_atUnk.m_dwArg1 = pChar->m_atUnk.m_dwArg1;
 	m_atUnk.m_dwArg2 = pChar->m_atUnk.m_dwArg2;
 	m_atUnk.m_dwArg3 = pChar->m_atUnk.m_dwArg3;
 
-	_timeNextRegen = pChar->_timeNextRegen;
-	m_timeCreate = pChar->m_timeCreate;
+	_iTimeNextRegen = pChar->_iTimeNextRegen;
+	_iTimeCreate = pChar->_iTimeCreate;
 
-	m_timeLastHitsUpdate = pChar->m_timeLastHitsUpdate;
+	_iTimeLastHitsUpdate = pChar->_iTimeLastHitsUpdate;
 
 	m_prev_Hue = pChar->m_prev_Hue;
 	SetHue(pChar->GetHue());
@@ -1025,8 +1036,6 @@ bool CChar::DupeFrom( CChar * pChar, bool fNewbieItems )
 
 	Skill_Cleanup();
 
-	g_World.m_uidLastNewChar = GetUID();	// for script access.
-
 	for ( uint i = 0; i < STAT_QTY; ++i )
 	{
         m_Stat[i] = pChar->m_Stat[i];
@@ -1037,7 +1046,6 @@ bool CChar::DupeFrom( CChar * pChar, bool fNewbieItems )
 		m_Skill[i] = pChar->m_Skill[i];
 	}
 
-	m_LocalLight = pChar->m_LocalLight;
 	m_fClimbUpdated = pChar->m_fClimbUpdated;
 	/*if ( m_pNPC )
 	{
@@ -1056,7 +1064,9 @@ bool CChar::DupeFrom( CChar * pChar, bool fNewbieItems )
 		m_pNPC->m_Brain = pChar->m_pNPC->m_Brain;
 		//m_pNPC->m_bonded = pChar->m_pNPC->m_bonded;
 	}
+
 	FixWeirdness();
+
 	SetName( pChar->GetName());	// SetName after FixWeirdness, otherwise it can be replaced again.
 	// We copy tags,etc first and place it because of NPC_LoadScript and @Create trigger, so it have information before calling it
 	m_TagDefs.Copy( &( pChar->m_TagDefs ) );
@@ -1067,7 +1077,12 @@ bool CChar::DupeFrom( CChar * pChar, bool fNewbieItems )
 	//Not calling NPC_LoadScript() because, in some part, it's breaking the name and looking for template names.
 	// end of CChar
 
-    CEntity::Copy(static_cast<CEntity*>(pChar));
+    CEntity::Copy(pChar);
+	CEntityProps::Copy(pChar);
+
+	const CUID& myUID(GetUID());
+	g_World.m_uidLastNewChar = myUID;	// for script access.
+
 	// Begin copying items.
 	for ( int i = 0 ; i < LAYER_QTY; ++i)
 	{
@@ -1081,39 +1096,41 @@ bool CChar::DupeFrom( CChar * pChar, bool fNewbieItems )
 			continue;
 
 		CItem * pItem = CItem::CreateDupeItem(fromLayer, this, true);
-		pItem->LoadSetContainer(GetUID(), layer);
+		pItem->LoadSetContainer(myUID, layer);
 		if ( fNewbieItems )
 		{
 			pItem->SetAttr(ATTR_NEWBIE);
 			if (pItem->IsType(IT_CONTAINER) )
 			{
-				for ( CItem *pItemCont = static_cast<CItemContainer*>(pItem)->GetContentHead(); pItemCont != nullptr; pItemCont = pItemCont->GetNext() )
+				CItemContainer* pContainer = static_cast<CItemContainer*>(pItem);
+				for (CSObjContRec* pObjRec : *pContainer)
 				{
+					CItem* pItemCont = static_cast<CItem*>(pObjRec);
 					pItemCont->SetAttr(ATTR_NEWBIE);
 
-					CChar *pTest = CUID::CharFind(pItemCont->m_itNormal.m_more1);
-					if ( pTest && pTest == pChar )
-						pItemCont->m_itNormal.m_more1 = this->GetUID();
+					const CChar *pTest = CUID::CharFind(pItemCont->m_itNormal.m_more1);
+					if (pTest && pTest == pChar)
+						pItemCont->m_itNormal.m_more1 = myUID;
 
-					CChar *pTest2 = CUID::CharFind(pItemCont->m_itNormal.m_more2);
+					const CChar *pTest2 = CUID::CharFind(pItemCont->m_itNormal.m_more2);
 					if ( pTest2 && pTest2 == pChar )
-						pItemCont->m_itNormal.m_more2 = this->GetUID();
+						pItemCont->m_itNormal.m_more2 = myUID;
 
-					CChar *pTest3 = CUID::CharFind(pItemCont->m_uidLink);
+					const CChar *pTest3 = CUID::CharFind(pItemCont->m_uidLink);
 					if ( pTest3 && pTest3 == pChar )
-						pItemCont->m_uidLink = this->GetUID();
+						pItemCont->m_uidLink = myUID;
 				}
 			}
 		}
-		CChar * pTest = CUID::CharFind(pItem->m_itNormal.m_more1);
+		const CChar * pTest = CUID::CharFind(pItem->m_itNormal.m_more1);
 		if ( pTest && pTest == pChar)
-			pItem->m_itNormal.m_more1 = this->GetUID();
+			pItem->m_itNormal.m_more1 = myUID;
 
-		CChar * pTest2 = CUID::CharFind(pItem->m_itNormal.m_more2);
+		const CChar * pTest2 = CUID::CharFind(pItem->m_itNormal.m_more2);
 		if (pTest2)
 		{
 			if (pTest2 == pChar)
-				pItem->m_itNormal.m_more2 = this->GetUID();
+				pItem->m_itNormal.m_more2 = myUID;
 			else if ( pTest2->NPC_IsOwnedBy(pChar, true) )	// Mount's fix
 			{
 				if ( fNewbieItems )	// Removing any mount references for the memory, so when character dies or dismounts ... no mount will appear.
@@ -1124,41 +1141,48 @@ bool CChar::DupeFrom( CChar * pChar, bool fNewbieItems )
 					pItem->Delete(true);
 					CChar * pChar2 = CreateNPC( pTest2->GetID());
 					pChar2->SetTopPoint( pChar->GetTopPoint() );	// Moving the mount again because the dupe will place it in the same place as the 'invisible & disconnected' original (usually far away from where the guy will be, so the duped char can't touch the mount).
-					pChar2->DupeFrom(pTest2,fNewbieItems);
+					pChar2->DupeFrom(pTest2, fNewbieItems);
 					pChar2->NPC_PetSetOwner(this);
 					Horse_Mount(pChar2);
 				}
 			}
 		}
 
-		CChar * pTest3 = CUID::CharFind(pItem->m_uidLink);
+		const CChar * pTest3 = CUID::CharFind(pItem->m_uidLink);
 		if ( pTest3 && pTest3 == pChar)
-			pItem->m_uidLink = this->GetUID();
-
+			pItem->m_uidLink = myUID;
 	}
 	// End copying items.
+
 	FixWeight();
+
+	if (pChar->_iTimePeriodicTick != 0)
+	{
+		CWorldTickingList::AddCharPeriodic(this);
+	}
+
 	Update();
-    g_World._Ticker.AddCharTicking(this);
 	return true;
 }
 
 // Reading triggers from CHARDEF
-bool CChar::ReadScriptTrig(CCharBase * pCharDef, CTRIG_TYPE trig, bool bVendor)
+bool CChar::ReadScriptTrig(CCharBase * pCharDef, CTRIG_TYPE trig, bool fVendor)
 {
 	ADDTOCALLSTACK("CChar::ReadScriptTrig");
 	if ( !pCharDef || !pCharDef->HasTrigger(trig) )
 		return false;
+
 	CResourceLock s;
 	if ( !pCharDef->ResourceLock(s) || !OnTriggerFind(s, sm_szTrigName[trig]) )
 		return false;
-	return ReadScript(s, bVendor);
+
+	return ReadScript(s, fVendor);
 }
 
 // If this is a regen they will have a pack already.
 // RETURN:
 //  true = default return. (mostly ignored).
-bool CChar::ReadScript(CResourceLock &s, bool bVendor)
+bool CChar::ReadScript(CResourceLock &s, bool fVendor)
 {
 	ADDTOCALLSTACK("CChar::ReadScript");
 	bool fFullInterp = false;
@@ -1171,7 +1195,7 @@ bool CChar::ReadScript(CResourceLock &s, bool bVendor)
 
 		int iCmd = FindTableSorted(s.GetKey(), CItem::sm_szTemplateTable, CountOf(CItem::sm_szTemplateTable)-1);
 
-		if ( bVendor )
+		if ( fVendor )
 		{
 			if (iCmd != -1)
 			{
@@ -1239,8 +1263,8 @@ bool CChar::ReadScript(CResourceLock &s, bool bVendor)
 						}
 						m_UIDLastNewItem.InitUID();	//Clearing the attr for the next cycle
 
-						pItem->m_iCreatedResScriptIdx = s.m_iResourceFileIndex;
-						pItem->m_iCreatedResScriptLine = s.m_iLineNum;
+						pItem->_iCreatedResScriptIdx = s.m_iResourceFileIndex;
+						pItem->_iCreatedResScriptLine = s.m_iLineNum;
 
 						if ( iCmd == ITC_ITEMNEWBIE )
 							pItem->SetAttr(ATTR_NEWBIE);
@@ -1565,10 +1589,10 @@ void CChar::InitPlayer( CClient *pClient, const char *pszCharname, bool fFemale,
 			Skill_SetBase(skSkill4, uiSkillVal4 * 10);
 	}
 
-    m_pPlayer->m_SpeechHue = HUE_TEXT_DEF;	// Set default client-sent speech color
-	m_fonttype			 = FONT_NORMAL;		// Set speech font type
-	m_SpeechHueOverride  = 0;		        // Set no server-side speech color override
-	m_sTitle.Empty();						// Set title
+    m_pPlayer->m_SpeechHue	= HUE_TEXT_DEF;	// Set default client-sent speech color
+	m_fonttype				= FONT_NORMAL;	// Set speech font type
+	m_SpeechHueOverride		= 0;			// Set no server-side speech color override
+	m_sTitle.clear();						// Set title
 
 	GetBank(LAYER_BANKBOX);			// Create bankbox
 	GetPackSafe();					// Create backpack
@@ -1975,27 +1999,31 @@ bool CChar::r_GetRef( lpctstr & ptcKey, CScriptObj * & pRef )
 				SKIP_SEPARATORS(ptcKey);
 				return true;
             case CHR_HOUSE:
-            {
-                int16 iPos = (int16)Exp_GetSingle(ptcKey);
-                if (GetMultiStorage()->GetHouseCountReal() <= iPos)
-                {
-                    return false;
-                }
-                pRef = static_cast<CItemMulti*>(GetMultiStorage()->GetHouseAt(iPos).ItemFind());
-                SKIP_SEPARATORS(ptcKey);
-                return true;
-            }
+				if (m_pPlayer)
+				{
+					const int16 iPos = (int16)Exp_GetSingle(ptcKey);
+					CMultiStorage* pMultiStorage = m_pPlayer->GetMultiStorage();
+					if (pMultiStorage->GetHouseCountReal() <= iPos)
+					{
+						return false;
+					}
+					pRef = static_cast<CItemMulti*>(pMultiStorage->GetHouseAt(iPos).ItemFind());
+					SKIP_SEPARATORS(ptcKey);
+					return true;
+				}
             case CHR_SHIP:
-            {
-                int16 iPos = (int16)Exp_GetSingle(ptcKey);
-                if (GetMultiStorage()->GetShipCountReal() <= iPos)
-                {
-                    return false;
-                }
-                pRef = static_cast<CItemShip*>(GetMultiStorage()->GetShipAt(iPos).ItemFind());
-                SKIP_SEPARATORS(ptcKey);
-                return true;
-            }
+				if (m_pPlayer)
+				{
+					const int16 iPos = (int16)Exp_GetSingle(ptcKey);
+					CMultiStorage* pMultiStorage = m_pPlayer->GetMultiStorage();
+					if (pMultiStorage->GetShipCountReal() <= iPos)
+					{
+						return false;
+					}
+					pRef = static_cast<CItemShip*>(pMultiStorage->GetShipAt(iPos).ItemFind());
+					SKIP_SEPARATORS(ptcKey);
+					return true;
+				}
 			case CHR_MEMORYFINDTYPE:	// FInd a type of memory.
 				pRef = Memory_FindTypes((word)(Exp_GetSingle(ptcKey)));
 				SKIP_SEPARATORS(ptcKey);
@@ -2201,7 +2229,7 @@ do_default:
 							}
 							else if (!strnicmp(ptcKey, "THREAT", 6))
 							{
-								sVal.FormatLLVal(refAttacker.threat);
+								sVal.FormatVal(refAttacker.threat);
 								return true;
 							}
 							else if (!strnicmp(ptcKey, "IGNORE", 6))
@@ -2447,7 +2475,7 @@ do_default:
 			sVal.FormatVal( m_defense + pCharDef->m_defense );
 			return true;
 		case CHC_AGE:
-			sVal.FormatLLVal( -( g_World.GetTimeDiff(m_timeCreate) / ( MSECS_PER_SEC * 60 * 60 *24 ) )); //displayed in days
+			sVal.FormatLLVal( CWorldGameTime::GetCurrentTime().GetTimeDiff(_iTimeCreate) / ( MSECS_PER_SEC * 60 * 60 *24 ) ); //displayed in days
 			return true;
 		case CHC_BANKBALANCE:
 			sVal.FormatVal( GetBank()->ContentCount( CResourceID(RES_TYPEDEF,IT_GOLD)));
@@ -2504,7 +2532,7 @@ do_default:
 						SKILL_TYPE iSkill = g_Cfg.FindSkillKey( ppArgs[0] );
 						if ( iSkill == SKILL_NONE )
 							return false;
-						
+
 						sVal.FormatVal( Skill_UseQuick( iSkill, Exp_GetVal( ppArgs[1] ), true ,(Exp_GetVal(ppArgs[2]) != 0 ? false : true), (Exp_GetVal(ppArgs[3]) != 0 ? true : false)));
 						return true;
 					}
@@ -2563,7 +2591,7 @@ do_default:
 				else
 				{
 					dword dwBlockFlags = 0;
-					g_World.GetHeightPoint2( ptDst, dwBlockFlags, true );
+					CWorldMap::GetHeightPoint2( ptDst, dwBlockFlags, true );
 					sVal.FormatHex( dwBlockFlags );
 				}
 			}
@@ -2692,34 +2720,6 @@ do_default:
 		case CHC_MAXWEIGHT:
 			sVal.FormatVal( g_Cfg.Calc_MaxCarryWeight(this));
 			return true;
-        case CHC_MAXHOUSES:
-            sVal.FormatU8Val(_iMaxHouses);
-            return true;
-        case CHC_HOUSES:
-            sVal.Format16Val(GetMultiStorage()->GetHouseCountReal());
-            return true;
-        case CHC_GETHOUSEPOS:
-        {
-            ptcKey += 11;
-            sVal.Format16Val(GetMultiStorage()->GetHousePos((CUID)Exp_GetDWVal(ptcKey)));
-            return true;
-        }
-		case CHC_MAXSHIPS:
-		{
-			sVal.FormatU8Val(_iMaxShips);
-			return true;
-		}
-        case CHC_SHIPS:
-        {
-            sVal.Format16Val(GetMultiStorage()->GetShipCountReal());
-            return true;
-        }
-        case CHC_GETSHIPPOS:
-        {
-            ptcKey += 11;
-            sVal.Format16Val(GetMultiStorage()->GetShipPos((CUID)Exp_GetDWVal(ptcKey)));
-            return true;
-        }
 		case CHC_ACCOUNT:
 			if ( ptcKey[7] == '.' )	// used as a ref ?
 			{
@@ -2795,7 +2795,7 @@ do_default:
 			sVal = g_Cfg.ResourceGetName( CResourceID( RES_CHARDEF, GetDispID()) );
 			break;
 		case CHC_CREATE:
-			sVal.FormatLLVal( -( g_World.GetTimeDiff(m_timeCreate) / MSECS_PER_TENTH));  // Displayed in Tenths of Second.
+			sVal.FormatLLVal( CWorldGameTime::GetCurrentTime().GetTimeDiff(_iTimeCreate) / MSECS_PER_TENTH );  // Displayed in Tenths of Second.
 			break;
 		case CHC_DIR:
 			{
@@ -2942,13 +2942,13 @@ do_default:
 				ptcKey += 11;
 				GETNONWHITESPACE(ptcKey);
 
-				CUID uid = Exp_GetVal( ptcKey );
+				const CUID uid(Exp_GetDWVal(ptcKey));
 				SKIP_ARGSEP( ptcKey );
-				bool fAllowIncog = ( Exp_GetVal( ptcKey ) >= 1 );
+				const bool fAllowIncog = ( Exp_GetVal( ptcKey ) >= 1 );
 				SKIP_ARGSEP( ptcKey );
-				bool fAllowInvul = ( Exp_GetVal( ptcKey ) >= 1 );
-				CChar * pChar;
+				const bool fAllowInvul = ( Exp_GetVal( ptcKey ) >= 1 );
 
+				const CChar * pChar;
 				if ( ! uid.IsValidUID() )
 					pChar = pCharSrc;
 				else
@@ -2974,18 +2974,18 @@ do_default:
 			goto do_default;
         case CHC_RANGE:
         {
-            const int iRangeH = GetRangeH(), iRangeL = GetRangeL();
+            const uchar iRangeH = GetRangeH(), iRangeL = GetRangeL();
             if ( iRangeL == 0 )
-                sVal.Format( "%d", iRangeH );
+                sVal.Format( "%hhd", iRangeH );
             else
-                sVal.Format( "%d,%d", iRangeH, iRangeL );
+                sVal.Format( "%hhd,%hhd", iRangeH, iRangeL );
             break;
         }
         case CHC_RANGEH:
-            sVal.FormatVal(GetRangeH());
+            sVal.FormatBVal(GetRangeH());
             break;
         case CHC_RANGEL:
-            sVal.FormatVal(GetRangeL());
+            sVal.FormatBVal(GetRangeL());
             break;
 		case CHC_STONE:
 			sVal.FormatVal( IsStatFlag( STATF_STONE ));
@@ -2993,13 +2993,10 @@ do_default:
 		case CHC_TITLE:
 			{
 				if (strlen(ptcKey) == 5)
-					sVal = m_sTitle; //GetTradeTitle
+					sVal = m_sTitle.c_str(); //GetTradeTitle
 				else
 					sVal = GetTradeTitle();
 			}break;
-		case CHC_LIGHT:
-			sVal.FormatHex(m_LocalLight);
-			break;
 		case CHC_EXP:
 			sVal.FormatVal(m_exp);
 			break;
@@ -3083,65 +3080,6 @@ bool CChar::r_LoadVal( CScript & s )
 
 	switch (iKeyNum)
 	{
-        case CHC_ADDHOUSE:
-        {
-            if (g_Serv.IsLoading()) //Prevent to load it from saves, it may cause a crash when accessing to a non-yet existant multi
-            {
-                break;
-            }
-            int64 piCmd[2];
-            Str_ParseCmds(s.GetArgStr(), piCmd, CountOf(piCmd));
-            HOUSE_PRIV ePriv = HP_OWNER;
-            if (piCmd[1] > 0 && piCmd[1] < HP_QTY)
-            {
-                ePriv = (HOUSE_PRIV)piCmd[1];
-            }
-            GetMultiStorage()->AddHouse(CUID((dword)piCmd[0]), ePriv);
-            break;
-        }
-        case CHC_DELHOUSE:
-        {
-            dword dwUID = s.GetArgDWVal();
-            if (dwUID == UID_UNUSED)
-            {
-                GetMultiStorage()->ClearHouses();
-            }
-            else
-            {
-                GetMultiStorage()->DelHouse(CUID(dwUID));
-            }
-            break;
-        }
-        case CHC_ADDSHIP:
-        {
-            if (g_Serv.IsLoading()) //Prevent to load it from saves, it may cause a crash when accessing to a non-yet existant multi
-            {
-                break;
-            }
-            int64 piCmd[2];
-            Str_ParseCmds(s.GetArgStr(), piCmd, CountOf(piCmd));
-            HOUSE_PRIV ePriv = HP_OWNER;
-            if (piCmd[1] > 0 && piCmd[1] < HP_QTY)
-            {
-                ePriv = (HOUSE_PRIV)piCmd[1];
-            }
-            GetMultiStorage()->AddShip(CUID((dword)piCmd[0]), ePriv);
-            break;
-        }
-        case CHC_DELSHIP:
-        {
-            dword dwUID = s.GetArgDWVal();
-            if (dwUID == UINT_MAX)
-            {
-                GetMultiStorage()->ClearShips();
-            }
-            else
-            {
-                GetMultiStorage()->DelShip(CUID(dwUID));
-            }
-            break;
-        }
-
 		//Status Update Variables
         case CHC_REGENHITS:
             Stats_SetRegenRate(STAT_STR, s.GetArg64Val()* MSECS_PER_SEC);
@@ -3245,12 +3183,6 @@ bool CChar::r_LoadVal( CScript & s )
             break;
 		case CHC_ACCOUNT:
 			return SetPlayerAccount( s.GetArgStr() );
-        case CHC_MAXHOUSES:
-            _iMaxHouses = s.GetArgU8Val();
-            break;
-		case CHC_MAXSHIPS:
-			_iMaxShips = s.GetArgU8Val();;
-			break;
 		case CHC_ACT:
 			m_Act_UID = s.GetArgVal();
 			break;
@@ -3340,8 +3272,6 @@ bool CChar::r_LoadVal( CScript & s )
 						return true;
 					}
 
-					if (! IsStrNumeric(ptcKey) )
-						return false;
 					int attackerIndex = Exp_GetVal(ptcKey);
 
 					SKIP_SEPARATORS(ptcKey);
@@ -3412,7 +3342,7 @@ bool CChar::r_LoadVal( CScript & s )
 				StatFlag_Mod(STATF_EMOTEACTION,fSet);
 			}
 			break;
-		case CHC_FLAGS:		
+		case CHC_FLAGS:
 			if (g_Serv.IsLoading())
 			{
 				// Don't set STATF_SAVEPARITY at server startup, otherwise the first worldsave will not save these chars
@@ -3425,7 +3355,7 @@ bool CChar::r_LoadVal( CScript & s )
 			break;
 		case CHC_FONT:
 			m_fonttype = (FONT_TYPE)s.GetArgVal();
-			if ( m_fonttype < 0 || m_fonttype >= FONT_QTY )
+			if (m_fonttype >= FONT_QTY)
 				m_fonttype = FONT_NORMAL;
 			break;
 		case CHC_SPEECHCOLOROVERRIDE:
@@ -3545,7 +3475,7 @@ bool CChar::r_LoadVal( CScript & s )
 			break;
         case CHC_RANGE:
         {
-			_iRange = CBaseBaseDef::ConvertRangeStr(s.GetArgStr());
+			_uiRange = CBaseBaseDef::ConvertRangeStr(s.GetArgStr());
             break;
         }
         case CHC_RANGEH:
@@ -3584,11 +3514,6 @@ bool CChar::r_LoadVal( CScript & s )
 			break;
 		case CHC_TITLE:
 			m_sTitle = s.GetArgStr();
-			break;
-		case CHC_LIGHT:
-			m_LocalLight = s.GetArgBVal();
-			if (m_pClient)
-				m_pClient->addLight();
 			break;
 		case CHC_EXP:
 			m_exp = s.GetArgUVal();
@@ -3648,7 +3573,7 @@ void CChar::r_Write( CScript & s )
 	EXC_TRY("r_Write");
 
 	s.WriteSection("WORLDCHAR %s", GetResourceName());
-	//s.WriteKeyVal("CREATE", -(g_World.GetTimeDiff(m_timeCreate) / MSECS_PER_TENTH)); // Do we need to save it?
+	//s.WriteKeyVal("CREATE", CWorldGameTime::GetCurrentTime().GetTimeDiff(_iTimeCreate) / MSECS_PER_TENTH ); // Do we need to save it?
 
     // Do not save TAG.LastHit (used by PreHit combat flag). It's based on the server uptime, so if this tag isn't zeroed,
     //  after the server restart the char may not be able to attack until the server reaches the serv.time when the previous TAG.LastHit was set.
@@ -3675,8 +3600,8 @@ void CChar::r_Write( CScript & s )
     const CPointMap& pt = GetTopPoint();
 	if ( pt.IsValidPoint() )
 		s.WriteKey("P", pt.WriteUsed());
-	if ( !m_sTitle.IsEmpty() )
-		s.WriteKey("TITLE", m_sTitle);
+	if ( !m_sTitle.empty() )
+		s.WriteKey("TITLE", m_sTitle.c_str());
 	if ( m_fonttype != FONT_NORMAL )
 		s.WriteKeyVal("FONT", m_fonttype);
 	if (m_SpeechHueOverride)
@@ -3689,27 +3614,17 @@ void CChar::r_Write( CScript & s )
 		s.WriteKeyHex("OSKIN", m_prev_Hue);
 	if ( m_iStatFlag )
 		s.WriteKeyHex("FLAGS", m_iStatFlag);
-	if ( m_LocalLight )
-		s.WriteKeyHex("LIGHT", m_LocalLight);
 	if ( m_attackBase )
 		s.WriteKeyFormat("DAM", "%" PRIu16 ",%" PRIu16, m_attackBase, m_attackBase + m_attackRange);
 	if ( m_defense )
 		s.WriteKeyVal("ARMOR", m_defense);
+
     const uint uiActUID = m_Act_UID.GetObjUID();
 	if ( (uiActUID & UID_UNUSED) != UID_UNUSED )
 		s.WriteKeyHex("ACT", uiActUID);
+
 	if ( m_Act_p.IsValidPoint() )
 		s.WriteKey("ACTP", m_Act_p.WriteUsed());
-
-    if (_iMaxHouses != g_Cfg._iMaxHousesPlayer)
-    {
-        s.WriteKeyVal("MaxHouses", _iMaxHouses);
-    }
-    if (_iMaxShips != g_Cfg._iMaxShipsPlayer)
-    {
-        s.WriteKeyVal("MaxShips", _iMaxShips);
-    }
-    GetMultiStorage()->r_Write(s);
 
     const SKILL_TYPE action = Skill_GetActive();
 	if ( action != SKILL_NONE )
@@ -3719,7 +3634,7 @@ void CChar::r_Write( CScript & s )
 		if (pSkillDef != nullptr)
 			pszActionTemp = const_cast<tchar*>(pSkillDef->GetKey());
 		else
-			pszActionTemp = Str_FromI(action, Str_GetTemp());
+			pszActionTemp = Str_FromI_Fast(action, Str_GetTemp(), STR_TEMPLENGTH, 10);
 		s.WriteKey("ACTION", pszActionTemp);
 
 		/* We save ACTARG1/ACTARG2/ACTARG3 only if the following conditions are satisfied:
@@ -4010,7 +3925,7 @@ bool CChar::r_Verb( CScript &s, CTextConsole * pSrc ) // Execute command from sc
 			}
 			break;
 		case CHV_CRIMINAL:
-			if (s.HasArgs() && !s.GetArgVal()) 
+			if (s.HasArgs() && !s.GetArgVal())
 			{
 				CItem * pMemoryCriminal = LayerFind(LAYER_FLAG_Criminal);
                 if (pMemoryCriminal)
@@ -4044,8 +3959,8 @@ bool CChar::r_Verb( CScript &s, CTextConsole * pSrc ) // Execute command from sc
 				CChar * pChar = CreateNPC( GetID() );
 				pChar->MoveTo( GetTopPoint() );
 				pChar->DupeFrom(this, s.GetArgVal() < 1 ? true : false);
-				pChar->m_iCreatedResScriptIdx = s.m_iResourceFileIndex;
-				pChar->m_iCreatedResScriptLine = s.m_iLineNum;
+				pChar->_iCreatedResScriptIdx = s.m_iResourceFileIndex;
+				pChar->_iCreatedResScriptLine = s.m_iLineNum;
 			}
 			break;
 		case CHV_EQUIP:	// uid
@@ -4266,8 +4181,8 @@ bool CChar::r_Verb( CScript &s, CTextConsole * pSrc ) // Execute command from sc
                     }
 					else
 					{
-                        pItem->m_iCreatedResScriptIdx = s.m_iResourceFileIndex;
-                        pItem->m_iCreatedResScriptLine = s.m_iLineNum;
+                        pItem->_iCreatedResScriptIdx = s.m_iResourceFileIndex;
+                        pItem->_iCreatedResScriptLine = s.m_iLineNum;
 
 						ItemEquip(pItem);
 						g_World.m_uidNew = pItem->GetUID();
@@ -4285,7 +4200,7 @@ bool CChar::r_Verb( CScript &s, CTextConsole * pSrc ) // Execute command from sc
         {
             if (!s.HasArgs())   // If there are no args, direct call on NPC_PetSetOwner.
                 return NPC_PetSetOwner(pCharSrc);
-            
+
 			CChar * pChar = CUID::CharFind(s.GetArgDWVal()); // otherwise we try to run it from the CChar with the given UID.
             if (pChar)
                 return pChar->NPC_PetSetOwner(this);
@@ -4337,7 +4252,8 @@ bool CChar::r_Verb( CScript &s, CTextConsole * pSrc ) // Execute command from sc
 
 		case CHV_PRIVSET:
 			return SetPrivLevel( pSrc, s.GetArgStr());
-		
+
+		case CHV_DESTROY:	// remove this char from the world and bypass trigger's return value.
 		case CHV_REMOVE:	// remove this char from the world instantly.
 			if ( m_pPlayer )
 			{
@@ -4349,20 +4265,7 @@ bool CChar::r_Verb( CScript &s, CTextConsole * pSrc ) // Execute command from sc
 				if ( IsClient() )
 					GetClient()->addObjectRemove(this);
 			}
-			Delete();
-			break;
-		case CHV_DESTROY:	// remove this char from the world and bypass trigger's return value.
-			if ( m_pPlayer )
-			{
-				if ( s.GetArgRaw()[0] != '1' || pSrc->GetPrivLevel() < PLEVEL_Admin )
-				{
-					pSrc->SysMessage( g_Cfg.GetDefaultMsg(DEFMSG_CMD_REMOVE_PLAYER) );
-					return false;
-				}
-				if ( IsClient() )
-					GetClient()->addObjectRemove(this);
-			}
-			Delete(true);
+			Delete((index == CHV_DESTROY));
 			break;
 		case CHV_RESURRECT:
 			{
@@ -4537,7 +4440,7 @@ lbl_cchar_ontriggerspeech:
 	{
 		for ( size_t i = 0; i < m_pPlayer->m_Speech.size(); ++i )
 		{
-			CResourceLink * pLinkDSpeech = m_pPlayer->m_Speech[i];
+			CResourceLink * pLinkDSpeech = m_pPlayer->m_Speech[i].GetRef();
 			if ( !pLinkDSpeech )
 				continue;
 

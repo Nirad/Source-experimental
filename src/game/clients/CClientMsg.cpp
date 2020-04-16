@@ -10,7 +10,11 @@
 #include "../items/CItemMessage.h"
 #include "../items/CItemMultiCustom.h"
 #include "../components/CCSpawn.h"
+#include "../CSector.h"
 #include "../CWorld.h"
+#include "../CWorldGameTime.h"
+#include "../CWorldMap.h"
+#include "../CWorldTickingList.h"
 #include "../spheresvr.h"
 #include "../triggers.h"
 #include "CClient.h"
@@ -51,8 +55,9 @@ void CClient::resendBuffs() const
 	word wStatEffect = 0;
 	word wTimerEffect = 0;
 
-	for ( const CItem *pItem = pChar->GetContentHead(); pItem != nullptr; pItem = pItem->GetNext() )
+	for (const CSObjContRec* pObjRec : *pChar)
 	{
+		const CItem* pItem = static_cast<const CItem*>(pObjRec);
 		if ( !pItem->IsType(IT_SPELL) )
 			continue;
 
@@ -67,26 +72,26 @@ void CClient::resendBuffs() const
 				addBuff(BI_NIGHTSIGHT, 1075643, 1075644, wTimerEffect);
 				break;
 			case SPELL_Clumsy:
-				Str_FromI(wStatEffect, NumBuff[0], 10);
+				Str_FromI(wStatEffect, NumBuff[0], sizeof(NumBuff[0]), 10);
 				removeBuff(BI_CLUMSY);
 				addBuff(BI_CLUMSY, 1075831, 1075832, wTimerEffect, pNumBuff, 1);
 				break;
 			case SPELL_Weaken:
-				Str_FromI(wStatEffect, NumBuff[0], 10);
+				Str_FromI(wStatEffect, NumBuff[0], sizeof(NumBuff[0]), 10);
 				removeBuff(BI_WEAKEN);
 				addBuff(BI_WEAKEN, 1075837, 1075838, wTimerEffect, pNumBuff, 1);
 				break;
 			case SPELL_Feeblemind:
-				Str_FromI(wStatEffect, NumBuff[0], 10);
+				Str_FromI(wStatEffect, NumBuff[0], sizeof(NumBuff[0]), 10);
 				removeBuff(BI_FEEBLEMIND);
 				addBuff(BI_FEEBLEMIND, 1075833, 1075834, wTimerEffect, pNumBuff, 1);
 				break;
 			case SPELL_Curse:
 			{
 				for ( int idx = STAT_STR; idx < STAT_BASE_QTY; ++idx )
-					Str_FromI(wStatEffect, NumBuff[idx], 10);
+					Str_FromI(wStatEffect, NumBuff[idx], sizeof(NumBuff[0]), 10);
 				for ( int idx = 3; idx < 7; ++idx )
-					Str_FromI(10, NumBuff[idx], 10);
+					Str_FromI(10, NumBuff[idx], sizeof(NumBuff[0]), 10);
 
 				removeBuff(BI_CURSE);
 				addBuff(BI_CURSE, 1075835, 1075836, wTimerEffect, pNumBuff, 7);
@@ -95,31 +100,31 @@ void CClient::resendBuffs() const
 			case SPELL_Mass_Curse:
 			{
 				for ( int idx = STAT_STR; idx < STAT_BASE_QTY; ++idx )
-					Str_FromI(wStatEffect, NumBuff[idx], 10);
+					Str_FromI(wStatEffect, NumBuff[idx], sizeof(NumBuff[0]), 10);
 
 				removeBuff(BI_MASSCURSE);
 				addBuff(BI_MASSCURSE, 1075839, 1075840, wTimerEffect, pNumBuff, 3);
 				break;
 			}
 			case SPELL_Strength:
-				Str_FromI(wStatEffect, NumBuff[0], 10);
+				Str_FromI(wStatEffect, NumBuff[0], sizeof(NumBuff[0]), 10);
 				removeBuff(BI_STRENGTH);
 				addBuff(BI_STRENGTH, 1075845, 1075846, wTimerEffect, pNumBuff, 1);
 				break;
 			case SPELL_Agility:
-				Str_FromI(wStatEffect, NumBuff[0], 10);
+				Str_FromI(wStatEffect, NumBuff[0], sizeof(NumBuff[0]), 10);
 				removeBuff(BI_AGILITY);
 				addBuff(BI_AGILITY, 1075841, 1075842, wTimerEffect, pNumBuff, 1);
 				break;
 			case SPELL_Cunning:
-				Str_FromI(wStatEffect, NumBuff[0], 10);
+				Str_FromI(wStatEffect, NumBuff[0], sizeof(NumBuff[0]), 10);
 				removeBuff(BI_CUNNING);
 				addBuff(BI_CUNNING, 1075843, 1075844, wTimerEffect, pNumBuff, 1);
 				break;
 			case SPELL_Bless:
 			{
 				for ( int idx = STAT_STR; idx < STAT_BASE_QTY; ++idx )
-					Str_FromI(wStatEffect, NumBuff[idx], 10);
+					Str_FromI(wStatEffect, NumBuff[idx], sizeof(NumBuff[0]), 10);
 
 				removeBuff(BI_BLESS);
 				addBuff(BI_BLESS, 1075847, 1075848, wTimerEffect, pNumBuff, STAT_BASE_QTY);
@@ -130,9 +135,9 @@ void CClient::resendBuffs() const
 				removeBuff(BI_REACTIVEARMOR);
 				if ( IsSetCombatFlags(COMBAT_ELEMENTAL_ENGINE) )
 				{
-					Str_FromI(wStatEffect, NumBuff[0], 10);
+					Str_FromI(wStatEffect, NumBuff[0], sizeof(NumBuff[0]), 10);
 					for ( int idx = 1; idx < 5; ++idx )
-						Str_FromI(5, NumBuff[idx], 10);
+						Str_FromI(5, NumBuff[idx], sizeof(NumBuff[0]), 10);
 
 					addBuff(BI_REACTIVEARMOR, 1075812, 1075813, wTimerEffect, pNumBuff, 5);
 				}
@@ -156,8 +161,8 @@ void CClient::resendBuffs() const
 				removeBuff(BuffIcon);
 				if ( IsSetCombatFlags(COMBAT_ELEMENTAL_ENGINE) )
 				{
-					Str_FromI(-pItem->m_itSpell.m_PolyStr, NumBuff[0], 10);
-					Str_FromI(-pItem->m_itSpell.m_PolyDex / 10, NumBuff[1], 10);
+					Str_FromI(-pItem->m_itSpell.m_PolyStr, NumBuff[0], sizeof(NumBuff[0]), 10);
+					Str_FromI(-pItem->m_itSpell.m_PolyDex / 10, NumBuff[1], sizeof(NumBuff[0]), 10);
 					addBuff(BuffIcon, BuffCliloc, 1075815, wTimerEffect, pNumBuff, 2);
 				}
 				else
@@ -183,9 +188,9 @@ void CClient::resendBuffs() const
 				removeBuff(BI_MAGICREFLECTION);
 				if ( IsSetCombatFlags(COMBAT_ELEMENTAL_ENGINE) )
 				{
-					Str_FromI(-wStatEffect, NumBuff[0], 10);
+					Str_FromI(-wStatEffect, NumBuff[0], sizeof(NumBuff[0]), 10);
 					for ( int idx = 1; idx < 5; ++idx )
-						Str_FromI(10, NumBuff[idx], 10);
+						Str_FromI(10, NumBuff[idx], sizeof(NumBuff[0]), 10);
 
 					addBuff(BI_MAGICREFLECTION, 1075817, 1075818, wTimerEffect, pNumBuff, 5);
 				}
@@ -248,7 +253,7 @@ void CClient::addTime( bool fCurrent ) const
 
 	if ( fCurrent )
 	{
-		llong lCurrentTime = g_World.GetCurrentTime().GetTimeRaw();
+		const llong lCurrentTime = CWorldGameTime::GetCurrentTime().GetTimeRaw();
 		new PacketGameTime(this,
 								( lCurrentTime / ( 60*60*MSECS_PER_SEC)) % 24,
 								( lCurrentTime / ( 60*MSECS_PER_SEC)) % 60,
@@ -529,6 +534,7 @@ void CClient::addLight() const
 	// NOTE: This could just be a flash of light.
 	// Global light level.
 	ASSERT(m_pChar);
+	ASSERT(m_pChar->m_pPlayer);
 
 	if (m_pChar->IsStatFlag(STATF_NIGHTSIGHT|STATF_DEAD))
 	{
@@ -538,8 +544,8 @@ void CClient::addLight() const
 
 	byte iLight = UINT8_MAX;
 
-	if ( m_pChar->m_LocalLight )			// personal light override
-		iLight = m_pChar->m_LocalLight;
+	if ( m_pChar->m_pPlayer->m_LocalLight )			// personal light override
+		iLight = m_pChar->m_pPlayer->m_LocalLight;
 
 	if ( iLight == UINT8_MAX )
 		iLight = m_pChar->GetLightLevel();
@@ -1134,7 +1140,7 @@ void CClient::addItemName( CItem * pItem )
 	if ( pCont != nullptr )
 	{
 		// ??? Corpses show hair as an item !!
-		len += sprintf( szName+len, g_Cfg.GetDefaultMsg(DEFMSG_CONT_ITEMS), pCont->GetCount(), pCont->GetTotalWeight() / WEIGHT_UNITS);
+		len += sprintf( szName+len, g_Cfg.GetDefaultMsg(DEFMSG_CONT_ITEMS), pCont->GetContentCount(), pCont->GetTotalWeight() / WEIGHT_UNITS);
 	}
 
 	// obviously damaged ?
@@ -1628,7 +1634,7 @@ void CClient::SetTargMode( CLIMODE_TYPE targmode, lpctstr pPrompt, int64 iTimeou
 
 	// determine timeout time
     if (iTimeout > 0)
-        m_Targ_Timeout = g_World.GetCurrentTime().GetTimeRaw() + iTimeout;
+        m_Targ_Timeout = CWorldGameTime::GetCurrentTime().GetTimeRaw() + iTimeout;
     else
         m_Targ_Timeout = 0;
 
@@ -2211,12 +2217,13 @@ void CClient::addCustomSpellbookOpen( CItem * pBook, dword gumpID )
 	if ( !pContainer )
 		return;
 
-	int count=0;
-	for ( CItem *pItem = pContainer->GetContentHead(); pItem != nullptr; pItem = pItem->GetNext() )
+	int count = 0;
+	for (CSObjContRec* pObjRec : *pContainer)
 	{
+		CItem* pItem = static_cast<CItem*>(pObjRec);
 		if ( !pItem->IsType( IT_SCROLL ) )
 			continue;
-		count++;
+		++ count;
 	}
 
 	OpenPacketTransaction transaction(this, PacketSend::PRI_NORMAL);
@@ -2661,9 +2668,9 @@ byte CClient::Setup_Start( CChar * pChar ) // Send character startup stuff to pl
 		}
 	}
 
-	if ( IsPriv(PRIV_GM_PAGE) && g_World.m_GMPages.GetCount() > 0 )
+	if ( IsPriv(PRIV_GM_PAGE) && !g_World.m_GMPages.IsContainerEmpty() )
 	{
-		sprintf(z, g_Cfg.GetDefaultMsg(DEFMSG_MSG_GMPAGES), (int)(g_World.m_GMPages.GetCount()), g_Cfg.m_cCommandPrefix);
+		sprintf(z, g_Cfg.GetDefaultMsg(DEFMSG_MSG_GMPAGES), (int)(g_World.m_GMPages.GetContentCount()), g_Cfg.m_cCommandPrefix);
 		addSysMessage(z);
 	}
 	if ( IsPriv(PRIV_JAILED) )
@@ -2697,7 +2704,7 @@ byte CClient::Setup_Start( CChar * pChar ) // Send character startup stuff to pl
 
 	DEBUG_MSG(( "%x:Setup_Start done\n", GetSocketID()));
 
-    g_World._Ticker.AddCharTicking(m_pChar);
+    CWorldTickingList::AddCharPeriodic(m_pChar);
 	return PacketLoginError::Success;
 }
 
@@ -2752,7 +2759,7 @@ byte CClient::Setup_Delete( dword iSlot ) // Deletion of character
 
 	// Make sure the char is at least x seconds old.
 	if ( g_Cfg.m_iMinCharDeleteTime &&
-		(- g_World.GetTimeDiff(pChar->m_timeCreate)/MSECS_PER_TENTH) < g_Cfg.m_iMinCharDeleteTime )
+		(CWorldGameTime::GetCurrentTime().GetTimeDiff(pChar->_iTimeCreate)/MSECS_PER_TENTH) < g_Cfg.m_iMinCharDeleteTime )
 	{
 		if ( GetPrivLevel() < PLEVEL_Counsel )
 		{

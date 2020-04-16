@@ -5,7 +5,9 @@
 #include "../items/CItemCorpse.h"
 #include "../components/CCPropsChar.h"
 #include "../components/CCSpawn.h"
-#include "../CWorld.h"
+#include "../CWorldGameTime.h"
+#include "../CWorldMap.h"
+#include "../CWorldTickingList.h"
 #include "../triggers.h"
 #include "CChar.h"
 #include "CCharNPC.h"
@@ -163,8 +165,8 @@ void CChar::Use_MoonGate( CItem * pItem )
 
 		// Set it's current destination based on the moon phases.
 		// ensure iTrammelPhrase isn't smaller than iFeluccaPhase, to avoid uint underflow in next calculation
-		size_t iTrammelPhase = g_World.GetMoonPhase(false) % iCount;
-		size_t iFeluccaPhase = g_World.GetMoonPhase(true) % iCount;
+		size_t iTrammelPhase = CWorldGameTime::GetMoonPhase(false) % iCount;
+		size_t iFeluccaPhase = CWorldGameTime::GetMoonPhase(true) % iCount;
 		if ( iTrammelPhase < iFeluccaPhase )
 			iTrammelPhase += iCount;
 
@@ -528,7 +530,7 @@ bool CChar::Use_Train_ArcheryButte( CItem * pButte, bool fSetup )
 
 	if ( m_pClient && (skill == SKILL_THROWING) )		// throwing weapons also have anim of the weapon returning after throw it
 	{
-		m_pClient->m_timeLastSkillThrowing = g_World.GetCurrentTime().GetTimeRaw();
+		m_pClient->m_timeLastSkillThrowing = CWorldGameTime::GetCurrentTime().GetTimeRaw();
 		m_pClient->m_pSkillThrowingTarg = pButte;
 		m_pClient->m_SkillThrowingAnimID = AnimID;
 		m_pClient->m_SkillThrowingAnimHue = AnimHue;
@@ -723,7 +725,7 @@ bool CChar::Use_Repair( CItem * pItemArmor )
 		return false;
 	}
 
-	m_Act_p = g_World.FindItemTypeNearby(GetTopPoint(), IT_ANVIL, 2, false);
+	m_Act_p = CWorldMap::FindItemTypeNearby(GetTopPoint(), IT_ANVIL, 2, false);
 	if ( !m_Act_p.IsValidPoint() )
 	{
 		SysMessageDefault(DEFMSG_REPAIR_ANVIL);
@@ -1082,6 +1084,7 @@ CChar * CChar::Use_Figurine( CItem * pItem, bool fCheckFollowerSlots )
 	pPet->Update();
 	pPet->Skill_Start(SKILL_NONE);	// was NPCACT_RIDDEN
 	pPet->SoundChar(CRESND_IDLE);
+	CWorldTickingList::AddCharPeriodic(pPet);
 	return pPet;
 }
 
@@ -1288,7 +1291,7 @@ bool CChar::Use_Seed( CItem * pSeed, CPointMap * pPoint )
 	}
 
 	// is there soil here ? IT_DIRT
-	if ( !IsPriv(PRIV_GM) && !g_World.IsItemTypeNear(pt, IT_DIRT, 0, false) )
+	if ( !IsPriv(PRIV_GM) && !CWorldMap::IsItemTypeNear(pt, IT_DIRT, 0, false) )
 	{
 		SysMessageDefault(DEFMSG_MSG_SEED_TARGSOIL);
 		return false;
@@ -1724,8 +1727,8 @@ int CChar::Do_Use_Item(CItem *pItem, bool fLink)
 							g_Cfg.GetDefaultMsg(DEFMSG_ITEMUSE_SPYGLASS_M7),
 							g_Cfg.GetDefaultMsg(DEFMSG_ITEMUSE_SPYGLASS_M8)
 					};
-			SysMessagef(g_Cfg.GetDefaultMsg(DEFMSG_ITEMUSE_SPYGLASS_TR), sm_sPhases[g_World.GetMoonPhase(false)]);
-			SysMessagef(g_Cfg.GetDefaultMsg(DEFMSG_ITEMUSE_SPYGLASS_FE), sm_sPhases[g_World.GetMoonPhase(true)]);
+			SysMessagef(g_Cfg.GetDefaultMsg(DEFMSG_ITEMUSE_SPYGLASS_TR), sm_sPhases[CWorldGameTime::GetMoonPhase(false)]);
+			SysMessagef(g_Cfg.GetDefaultMsg(DEFMSG_ITEMUSE_SPYGLASS_FE), sm_sPhases[CWorldGameTime::GetMoonPhase(true)]);
 
 			if (m_pArea && m_pArea->IsFlag(REGION_FLAG_SHIP))
 				ObjMessage(pItem->Use_SpyGlass(this), this);
@@ -1807,8 +1810,9 @@ bool CChar::ItemEquipArmor( bool fForce )
 		}
 	}
 
-	for ( CItem *pItem = pPack->GetContentHead(); pItem != nullptr; pItem = pItem->GetNext() )
+	for (CSObjContRec* pObjRec : *pPack)
 	{
+		CItem* pItem = static_cast<CItem*>(pObjRec);
 		int iScore = pItem->Armor_GetDefense();
 		if ( !iScore )	// might not be armor
 			continue;
@@ -1852,8 +1856,9 @@ bool CChar::ItemEquipWeapon( bool fForce )
 	CItem *pBestWeapon = nullptr;
 	int iWeaponScoreMax = NPC_GetWeaponUseScore(nullptr);	// wrestling
 
-	for ( CItem *pItem = pPack->GetContentHead(); pItem != nullptr; pItem = pItem->GetNext() )
+	for (CSObjContRec* pObjRec : *pPack)
 	{
+		CItem* pItem = static_cast<CItem*>(pObjRec);
 		int iWeaponScore = NPC_GetWeaponUseScore(pItem);
 		if ( iWeaponScore > iWeaponScoreMax )
 		{

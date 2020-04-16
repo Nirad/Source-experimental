@@ -49,7 +49,6 @@ public:
 
 	
 	int GetDistZ( const CPointBase & pt ) const noexcept;
-	int GetDistZAdj( const CPointBase & pt ) const noexcept;
 	int GetDistBase( const CPointBase & pt ) const noexcept;	    // Distance between points
 	int GetDist( const CPointBase & pt ) const noexcept;			// Distance between points
 	int GetDistSightBase( const CPointBase & pt ) const noexcept;	// Distance between points based on UO sight
@@ -58,8 +57,12 @@ public:
 
 	bool IsValidZ() const noexcept;
 	bool IsValidXY() const noexcept;
-	bool IsValidPoint() const noexcept;
 	bool IsCharValid() const noexcept;
+	inline bool IsValidPoint() const noexcept
+	{
+		// Called a LOT of times, it's worth inlining it.
+		return (IsValidXY() && IsValidZ());
+	}
 
 	void ValidatePoint();
 

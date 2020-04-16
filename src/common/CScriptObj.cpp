@@ -10,12 +10,17 @@
 #include "../game/clients/CAccount.h"
 #include "../game/clients/CClient.h"
 #include "../game/CScriptProfiler.h"
+#include "../game/CSector.h"
+#include "../game/CServer.h"
 #include "../game/CWorld.h"
+#include "../game/CWorldMap.h"
+#include "../game/CTimedFunctions.h"
 #include "../sphere/ProfileTask.h"
 #include "crypto/CBCrypt.h"
 #include "crypto/CMD5.h"
 #include "resource/blocks/CResourceNamedDef.h"
 #include "resource/CResourceLock.h"
+#include "CFloatMath.h"
 #include "CExpression.h"
 #include "CSFileObjContainer.h"
 #include "CScriptTriggerArgs.h"
@@ -636,7 +641,7 @@ badcmd:
 			break;
 		case SSC_FLOATVAL: //Float math
 			{
-				sVal = CVarFloat::FloatMath( ptcKey );
+				sVal = CFloatMath::FloatMath( ptcKey );
 				break;
 			}
 //FLOAT STUFF ENDS HERE
@@ -1131,6 +1136,23 @@ bool CScriptObj::r_Verb( CScript & s, CTextConsole * pSrc ) // Execute command f
 			CScript script(ptcKey, s.GetArgStr());
 			script.m_iResourceFileIndex = s.m_iResourceFileIndex;	// Index in g_Cfg.m_ResourceFiles of the CResourceScript (script file) where the CScript originated
 			script.m_iLineNum = s.m_iLineNum;						// Line in the script file where Key/Arg were read
+
+			if ( dynamic_cast<CAccount*>(pRef) != nullptr)
+			{
+				// Dirty fix:
+				// If the REF is an ACCOUNT, it does special checks with the SRC to compare the PrivLevel to allow read/write its values.
+				//	If i'm running in a trigger, so in a script, get the max privileges and change the SRC.
+				CObjBase* pThisObj = dynamic_cast<CObjBase*>(this);
+				if (pThisObj)
+				{
+					if (pThisObj->IsRunningTrigger())
+					{
+						pSrc = &g_Serv;
+						ASSERT(pSrc);
+					}
+				}	
+			}
+
 			return pRef->r_Verb( script, pSrc );
 		}
 		// else just fall through. as they seem to be setting the pointer !?
@@ -1213,8 +1235,8 @@ bool CScriptObj::r_Verb( CScript & s, CTextConsole * pSrc ) // Execute command f
 					g_World.m_uidNew = (dword)0;
 					return false;
 				}
-				pItem->m_iCreatedResScriptIdx = s.m_iResourceFileIndex;
-				pItem->m_iCreatedResScriptLine = s.m_iLineNum;
+				pItem->_iCreatedResScriptIdx = s.m_iResourceFileIndex;
+				pItem->_iCreatedResScriptLine = s.m_iLineNum;
 
 				if ( ppCmd[1] )
 					pItem->SetAmount(Exp_GetWVal(ppCmd[1]));
@@ -1264,8 +1286,8 @@ bool CScriptObj::r_Verb( CScript & s, CTextConsole * pSrc ) // Execute command f
 					return false;
 				}
 
-				pChar->m_iCreatedResScriptIdx = s.m_iResourceFileIndex;
-				pChar->m_iCreatedResScriptLine = s.m_iLineNum;
+				pChar->_iCreatedResScriptIdx = s.m_iResourceFileIndex;
+				pChar->_iCreatedResScriptLine = s.m_iLineNum;
 
 				g_World.m_uidNew = pChar->GetUID();
 
@@ -1299,8 +1321,8 @@ bool CScriptObj::r_Verb( CScript & s, CTextConsole * pSrc ) // Execute command f
 	                return false;
 	            }
 
-				pChar->m_iCreatedResScriptIdx = s.m_iResourceFileIndex;
-				pChar->m_iCreatedResScriptLine = s.m_iLineNum;
+				pChar->_iCreatedResScriptIdx = s.m_iResourceFileIndex;
+				pChar->_iCreatedResScriptLine = s.m_iLineNum;
 
 	            if (this != &g_Serv)
 	            {
@@ -1808,7 +1830,7 @@ TRIGRET_TYPE CScriptObj::OnTriggerForLoop( CScript &s, int iType, CTextConsole *
 			char funcname[1024];
 			Str_CopyLimitNull(funcname, ptcArgs, sizeof(funcname));
 
-			TRIGRET_TYPE iRet = g_World._Ticker.m_TimedFunctions.Loop(funcname, LoopsMade, StartContext, EndContext, s, pSrc, pArgs, pResult);
+			TRIGRET_TYPE iRet = CTimedFunctions::Loop(funcname, LoopsMade, StartContext, s, pSrc, pArgs, pResult);
 			if ((iRet != TRIGRET_ENDIF) && (iRet != TRIGRET_CONTINUE))
 				return iRet;
 		}

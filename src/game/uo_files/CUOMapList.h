@@ -6,18 +6,16 @@
 #ifndef _INC_CUOMAPLIST_H
 #define _INC_CUOMAPLIST_H
 
-#include "../../common/common.h"
-
 
 class CServerMapDiffCollection;
 
 extern class CUOMapList
 {
-#define MAP_SUPPORTED_QTY 256
+#define MAP_SUPPORTED_QTY 255
 
     friend struct CUOInstall;
     friend class  CWorld;
-    friend class  CServerMap;
+    friend class  CWorldMap;
     friend class  CServerMapBlock;
 
 protected:
@@ -42,19 +40,22 @@ public:
      */
     ///@{
     CUOMapList();
+
 private:
     CUOMapList(const CUOMapList& copy);
     CUOMapList& operator=(const CUOMapList& other);
     ///@}
+
 public:
     /** @name Modifiers:
      */
     ///@{
     void Clear();
-    bool ResetMap(int map, int maxx, int maxy, int sectorsize, int realmapnum, int mapid);
+    void ResetMap(int map, int maxx, int maxy, int sectorsize, int realmapnum, int mapid);
     void Init();
     bool Load(int map, char *args);
     ///@}
+
     /** @name Operations:
      */
     ///@{
@@ -70,10 +71,10 @@ public:
     int CalcSectorRows(int map) const; // Use it only when initializing the map sectors! (because it's slower than the Get* method)
     int GetSectorCols(int map) const;
     int GetSectorRows(int map) const;
-    int GetX(int map) const;
-    int GetY(int map) const;
-    int GetCenterX(int map) const;
-    int GetCenterY(int map) const;
+    inline int GetMapSizeX(int map) const noexcept;
+    inline int GetMapSizeY(int map) const noexcept;
+    int GetMapCenterX(int map) const;
+    int GetMapCenterY(int map) const;
 
     int GetMapFileNum(int map) const;
     int GetMapID(int map) const;
@@ -81,5 +82,23 @@ public:
     ///@}
 } g_MapList;
 
+
+// Inline methods definition
+
+int CUOMapList::GetMapSizeX(int map) const noexcept
+{
+    // Used by CPointBase::IsValidXY(), which is called a LOT
+    //ASSERT(IsMapSupported(map));
+    //ASSERT(m_sizex[map] != -1);
+    return m_sizex[map];
+}
+
+int CUOMapList::GetMapSizeY(int map) const noexcept
+{
+    // Used by CPointBase::IsValidXY(), which is called a LOT
+    //ASSERT(IsMapSupported(map));
+    //ASSERT(m_sizey[map] != -1);
+    return m_sizey[map];
+}
 
 #endif //_INC_CUOMAPLIST_H

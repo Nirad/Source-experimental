@@ -9,7 +9,9 @@
 #include "../game/items/CItemMultiCustom.h"
 #include "../game/items/CItemShip.h"
 #include "../game/items/CItemVendable.h"
-#include "../game/CWorld.h"
+#include "../game/CServer.h"
+#include "../game/CWorldGameTime.h"
+#include "../game/CWorldMap.h"
 #include "../game/triggers.h"
 #include "CClientIterator.h"
 #include "CNetState.h"
@@ -741,7 +743,7 @@ bool PacketVendorBuyReq::onReceive(CNetState* net)
 	if (vardef != nullptr)
 	{
 		const int64 allowsell = vardef->GetValNum() + (itemCount * 3LL);
-		if (g_World.GetCurrentTime().GetTimeRaw() < allowsell)
+		if (CWorldGameTime::GetCurrentTime().GetTimeRaw() < allowsell)
 		{
 			client->SysMessage(g_Cfg.GetDefaultMsg(DEFMSG_NPC_VENDOR_BUYFAST));
 			return true;
@@ -1198,10 +1200,13 @@ bool PacketBulletinBoardReq::onReceive(CNetState* net)
 				return true;
 			}
 
-			if (board->GetCount() > 32)
+			size_t uiContCount = board->GetContentCount();
+			if (uiContCount > 32)
 			{
 				// roll a message off
-				delete board->GetAt(board->GetCount() - 1);
+				CItem *pMsg = static_cast<CItem*>(board->GetContentIndex(uiContCount - 1));
+				ASSERT(pMsg);
+				pMsg->Delete();
 			}
 
 			uint lenstr = readByte();
@@ -1220,12 +1225,13 @@ bool PacketBulletinBoardReq::onReceive(CNetState* net)
 
 			newMessage->SetAttr(ATTR_MOVE_NEVER);
 			newMessage->SetName(str);
-			newMessage->SetTimeStamp(g_World.GetCurrentTime().GetTimeRaw());
+			newMessage->SetTimeStamp(CWorldGameTime::GetCurrentTime().GetTimeRaw());
 			newMessage->m_sAuthor = character->GetName();
 			newMessage->m_uidLink = character->GetUID();
 
 			int lines = readByte();
-			if (lines > 32) lines = 32;
+			if (lines > 32)
+                lines = 32;
 
 			while (lines--)
 			{
@@ -1879,7 +1885,7 @@ bool PacketVendorSellReq::onReceive(CNetState* net)
 	if (vardef != nullptr)
 	{
 		int64 allowsell = vardef->GetValNum() + ((itemCount * 3LL) * MSECS_PER_TENTH);
-		if (g_World.GetCurrentTime() < allowsell)
+		if (CWorldGameTime::GetCurrentTime() < allowsell)
 		{
 			client->SysMessage(g_Cfg.GetDefaultMsg(DEFMSG_NPC_VENDOR_SELLFAST));
 			return true;
@@ -3182,7 +3188,7 @@ PacketTargetedSkill::PacketTargetedSkill() : Packet(0)
 bool PacketTargetedSkill::onReceive(CNetState* net)
 {
     ADDTOCALLSTACK("PacketTargetedSkill::onReceive");
-    
+
     word  wSkillID    = readInt16();    // if SkillID = 0, it means that is lastskill
     dword dwTargetUID = readInt32();
 
@@ -3260,7 +3266,7 @@ bool PacketGargoyleFly::onReceive(CNetState* net)
 		client->addBuff(BI_GARGOYLEFLY, 1112193, 1112567);
 
 		// float player up to the hover Z
-		CPointMap ptHover = g_World.FindItemTypeNearby(character->GetTopPoint(), IT_HOVEROVER, 0);
+		CPointMap ptHover = CWorldMap::FindItemTypeNearby(character->GetTopPoint(), IT_HOVEROVER, 0);
 		if ( ptHover.IsValidPoint() )
 			character->MoveTo(ptHover);
 	}
@@ -3327,7 +3333,7 @@ bool PacketWheelBoatMove::onReceive(CNetState* net)
 			//	ship_face = pShipItem->Ship_Face()
 
 			//Ship_* need to be private? there is another way to ask the ship to move?
-			//pShipItem->Ship_Move(static_cast<DIR_TYPE>((moving - pShipItem->m_itShip.m_DirFace)), pShipItem->m_shipSpeed.tiles);
+			//pShipItem->Ship_Move(static_cast<DIR_TYPE>((moving - pShipItem->m_itShip.m_DirFace)), pShipItem->_shipSpeed.tiles);
 
 			if ((facing == DIR_N || facing == DIR_E || facing == DIR_S || facing == DIR_W) && pShipItem->m_itShip.m_DirFace != facing) //boat cannot face intermediate directions
 				pShipItem->Face(moving);
@@ -3491,7 +3497,7 @@ bool PacketAOSTooltipReq::onReceive(CNetState* net)
 		CObjBase* object = CUID(readInt32()).ObjFind();
 		if (object == nullptr)
 			continue;
-		
+
         bool bShop = false;
         const CItem* pSearchObjItem = dynamic_cast<const CItem*>(object);
         if (pSearchObjItem)
@@ -3504,7 +3510,7 @@ bool PacketAOSTooltipReq::onReceive(CNetState* net)
                 pSearchObjItem = dynamic_cast<const CItem*>(pSearchObj);
                 if (!pSearchObjItem)
                     break;
-                
+
                 LAYER_TYPE objContItemLayer = pSearchObjItem->GetEquipLayer();
                 if (objContItemLayer >= 26 && objContItemLayer <= 28)
                 {
@@ -3513,11 +3519,11 @@ bool PacketAOSTooltipReq::onReceive(CNetState* net)
                     break;
                 }
             }
-        }	
+        }
 
 		if (bShop)	// shop item
 			client->addAOSTooltip(object, true, true);
-		else		// char or regular items		
+		else		// char or regular items
 		{
 			if (character->CanSee(object) == false)
 				continue;
@@ -4498,7 +4504,7 @@ bool PacketCrashReport::onReceive(CNetState* net)
             g_Log.Event(LOGM_CLIENTS_LOG|LOGL_WARN|LOGM_NOCONTEXT, "Char attached. Last server P=%d,%d,%d,%d\n", ptChar.m_x, ptChar.m_y, ptChar.m_z, ptChar.m_map);
         }
     }
-    
+
 	return true;
 }
 
@@ -4517,7 +4523,7 @@ bool PacketCreateHS::onReceive(CNetState* net)
 {
 	ADDTOCALLSTACK("PacketCreateHS::onReceive");
 	// standard character creation packet, but with 4 skills and different handling of race and sex.
-	
+
 	tchar charname[MAX_NAME_SIZE];
 	SKILL_TYPE skill1 = SKILL_NONE, skill2 = SKILL_NONE, skill3 = SKILL_NONE, skill4 = SKILL_NONE;
 	byte skillval1 = 0, skillval2 = 0, skillval3 = 0, skillval4 = 0;
@@ -4554,7 +4560,7 @@ bool PacketCreateHS::onReceive(CNetState* net)
 
 	// convert race_sex_flag: determine which race and sex the client has selected
 	bool isFemale = (race_sex_flag % 2) != 0;	// Even=Male, Odd=Female (rule applies to all clients)
-	RACE_TYPE rtRace = RACETYPE_HUMAN;			// Human								   
+	RACE_TYPE rtRace = RACETYPE_HUMAN;			// Human
 	/*
 	race_sex_flag values since Classic Client 7.0.16.0
 	0x2 = Human (male)
@@ -4630,7 +4636,7 @@ bool PacketPublicHouseContent::onReceive(CNetState* net)
 
     CClient* client = net->getClient();
     ASSERT(client);
-    
+
     client->_fShowPublicHouseContent = readBool();
 
     return true;

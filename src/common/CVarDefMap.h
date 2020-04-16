@@ -8,7 +8,6 @@
 
 #include "sphere_library/CSString.h"
 #include "sphere_library/CSSortedVector.h"
-#include "common.h"
 
 
 class CTextConsole;
@@ -140,7 +139,7 @@ public:
 	void Copy( const CVarDefMap * pArray );
 	bool Compare( const CVarDefMap * pArray );
 	bool CompareAll( const CVarDefMap * pArray );
-	void Empty();
+	void Clear();
 	size_t GetCount() const;
 
 public:
@@ -178,7 +177,7 @@ public:
 	void DeleteKey( lpctstr key );
 
 	//bool r_LoadVal( CScript & s );
-	void r_WritePrefix( CScript & s, lpctstr pszPrefix = nullptr, lpctstr pszKeyExclude = nullptr );
+	void r_WritePrefix( CScript & s, lpctstr pszPrefix = nullptr, lpctstr pszKeyExclude = nullptr ) const;
 
     // Iterators
     inline iterator begin();

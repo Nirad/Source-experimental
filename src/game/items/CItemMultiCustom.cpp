@@ -9,7 +9,8 @@
 #include "../../network/send.h"
 #include "../chars/CChar.h"
 #include "../clients/CClient.h"
-#include "../CWorld.h"
+#include "../CServer.h"
+#include "../CWorldMap.h"
 #include "../triggers.h"
 #include "CItemMultiCustom.h"
 
@@ -226,7 +227,7 @@ void CItemMultiCustom::EndCustomize(bool fForce)
 
             // find ground height, since the signpost is usually raised
             dword dwBlockFlags = 0;
-            ptDest.m_z = g_World.GetHeightPoint2(ptDest, dwBlockFlags, true);
+            ptDest.m_z = CWorldMap::GetHeightPoint2(ptDest, dwBlockFlags, true);
 
             pChar->MoveToChar(ptDest);
             pChar->UpdateMove(ptOld);
@@ -1869,12 +1870,12 @@ char CItemMultiCustom::GetPlaneZ(uchar plane)
     return 7 + ((plane - 1) * 20);
 }
 
-bool CItemMultiCustom::IsValidItem(ITEMID_TYPE id, CClient * pClientSrc, bool bMulti)
+bool CItemMultiCustom::IsValidItem(ITEMID_TYPE id, CClient * pClientSrc, bool fMulti)
 {
     ADDTOCALLSTACK("CItemMultiCustom::IsValidItem");
-    if (!bMulti && (id <= 0 || id >= ITEMID_MULTI))
+    if (!fMulti && (id <= 0 || id >= ITEMID_MULTI))
         return false;
-    if (bMulti && (id < ITEMID_MULTI || id > ITEMID_MULTI_MAX))
+    if (fMulti && (id < ITEMID_MULTI || id > ITEMID_MULTI_MAX))
         return false;
 
     // GMs and scripts can place any item
@@ -1886,7 +1887,7 @@ bool CItemMultiCustom::IsValidItem(ITEMID_TYPE id, CClient * pClientSrc, bool bM
         return false;
 
     // check the item exists in the database
-    ValidItemsContainer::iterator it = sm_mapValidItems.find(id);
+    ValidItemsContainer::const_iterator it = sm_mapValidItems.find(id);
     if (it == sm_mapValidItems.end())
         return false;
 

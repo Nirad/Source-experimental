@@ -1,4 +1,4 @@
-
+#include "../../common/sphere_library/CSTime.h"
 #include "../../common/resource/CResourceLock.h"
 #include "../../network/receive.h"
 #include "../../network/send.h"
@@ -8,7 +8,8 @@
 #include "../items/CItemMulti.h"
 #include "../items/CItemVendable.h"
 #include "../CException.h"
-#include "../CWorld.h"
+#include "../CSector.h"
+#include "../CWorldMap.h"
 #include "../spheresvr.h"
 #include "../triggers.h"
 #include "CClient.h"
@@ -211,13 +212,14 @@ void CClient::Event_Item_Pickup(CUID uid, word amount) // Client grabs an item
 
 	EXC_SET_BLOCK("FastLoot");
 	//	fastloot (,emptycontainer) protection
-	if ( m_tNextPickup > g_World.GetCurrentTime().GetTimeRaw())
+	const int64 iCurTime = GetPreciseSysTimeMilli();
+	if ( m_tNextPickup > iCurTime)
 	{
 		EXC_SET_BLOCK("FastLoot - addItemDragCancel(0)");
 		new PacketDragCancel(this, PacketDragCancel::CannotLift);
 		return;
 	}
-	m_tNextPickup = g_World.GetCurrentTime().GetTimeRaw() + (MSECS_PER_SEC/3);    // Using time in MSECS to work with this packet.
+	m_tNextPickup = iCurTime + (MSECS_PER_SEC/3);    // Using time in MSECS to work with this packet.
 
 	EXC_SET_BLOCK("Origin");
 	// Where is the item coming from ? (just in case we have to toss it back)
@@ -716,7 +718,7 @@ bool CClient::Event_CheckWalkBuffer()
 		return true;
 
 	// Client only allows 4 steps of walk ahead.
-	const int64 iCurTime = CWorldClock::GetSystemClock();
+	const int64 iCurTime = GetPreciseSysTimeMilli();
     int64 iTimeDiff = (int64)llabs(iCurTime - m_timeWalkStep);	// use absolute value to prevent overflows
     int64 iTimeMin = m_pChar->IsStatFlag(STATF_ONHORSE|STATF_HOVERING) ? 700 : 1400; // minimum time to move 8 steps in milliseconds
 
@@ -814,10 +816,11 @@ bool CClient::Event_Walk( byte rawdir, byte sequence ) // Player moves
 			return false;
 		}
 
+		// To get milliseconds precision we must get the system clock manually at each walk request (the server clock advances only at every tick).
+		const int64 iCurTime = GetPreciseSysTimeMilli();
+
         if ( IsSetEF(EF_FastWalkPrevention) )
         {
-            // To get milliseconds precision we must get the system clock manually at each walk request (the server clock advances only at every tick).
-            int64 iCurTime = CWorldClock::GetSystemClock();
             if ( iCurTime < m_timeNextEventWalk )		// fastwalk detected
             {
                 new PacketMovementRej(this, sequence);
@@ -871,7 +874,7 @@ bool CClient::Event_Walk( byte rawdir, byte sequence ) // Player moves
             }
 		}
 
-		m_timeLastEventWalk = g_World.GetCurrentTime().GetTimeRaw();
+		m_timeLastEventWalk = iCurTime;
 		++m_iWalkStepCount;					// Increase step count to use on walk buffer checks
 	}
 	else
@@ -1114,11 +1117,12 @@ void CClient::Event_VendorBuy(CChar* pVendor, const VendorItem* items, uint uiIt
 			continue;
 		if ( IsSetOF(OF_PetSlots) )
 		{
-			CCharBase *pPetDef = CCharBase::FindCharBase( pItem->m_itFigurine.m_ID );
+			CItemBase* pItemPet = CItemBase::FindItemBase(pItem->GetID());
+			CCharBase* pPetDef = CCharBase::FindCharBase(CREID_TYPE(pItemPet->m_ttFigurine.m_idChar.GetResIndex()));
 			if ( pPetDef )
 			{
 				short iFollowerSlots = (short)pPetDef->GetDefNum("FOLLOWERSLOTS");
-				if ( !m_pChar->FollowersUpdate(pVendor, (maximum(1, iFollowerSlots))) )
+				if ( !m_pChar->FollowersUpdate(pVendor, (maximum(1, iFollowerSlots) * items[i].m_vcAmount), true) )
 				{
 					m_pChar->SysMessageDefault( DEFMSG_PETSLOTS_TRY_CONTROL );
 					return;
@@ -1721,8 +1725,11 @@ void CClient::Event_Talk_Common(lpctstr pszText)	// PC speech
 
 		if ( pChar->IsStatFlag(STATF_COMM_CRYSTAL) )
 		{
-			for ( CItem *pItem = pChar->GetContentHead(); pItem != nullptr; pItem = pItem->GetNext() )
+			for (CSObjContRec* pObjRec : pChar->GetIterationSafeCont())
+			{
+				CItem* pItem = static_cast<CItem*>(pObjRec);
 				pItem->OnHear(pszText, m_pChar);
+			}
 		}
 
 		if ( pChar == m_pChar )

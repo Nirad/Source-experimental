@@ -9,7 +9,7 @@
 
 CEntity::CEntity()
 {
-    _List.clear();
+    _lComponents.clear();
 }
 
 CEntity::~CEntity()
@@ -20,96 +20,89 @@ CEntity::~CEntity()
 void CEntity::Delete(bool fForce)
 {
     ADDTOCALLSTACK_INTENSIVE("CEntity::Delete");
-    if (_List.empty())
+    if (_lComponents.empty())
         return;
-    for (auto it = _List.begin(), itEnd = _List.end(); it != itEnd; ++it)
+    for (auto it = _lComponents.begin(), itEnd = _lComponents.end(); it != itEnd; ++it)
     {
         CComponent *pComponent = it->second;
         ASSERT(pComponent);
         pComponent->Delete(fForce);
     }
-    _List.clear();
+    _lComponents.clear();
 }
 
 void CEntity::ClearComponents()
 {
     ADDTOCALLSTACK_INTENSIVE("CEntity::ClearComponents");
-    if (_List.empty())
+    if (_lComponents.empty())
         return;
-    for (auto it = _List.begin(), itEnd = _List.end(); it != itEnd; ++it)
+    for (auto it = _lComponents.begin(), itEnd = _lComponents.end(); it != itEnd; ++it)
     {
         CComponent *pComponent = it->second;
         ASSERT(pComponent);
         delete pComponent;
     }
-    _List.clear();
+    _lComponents.clear();
 }
 
 void CEntity::SubscribeComponent(CComponent * pComponent)
 {
     ADDTOCALLSTACK_INTENSIVE("CEntity::SubscribeComponent");
-    COMP_TYPE compType = pComponent->GetType();
-    if (_List.end() != _List.find(compType))
+    const COMP_TYPE compType = pComponent->GetType();
+    const auto pairResult = _lComponents.try_emplace(compType, pComponent);
+    if (pairResult.second == false)
     {
         delete pComponent;
-        PERSISTANT_ASSERT(0);  // This should never happen
+        ASSERT(false);  // This should never happen
         //g_Log.EventError("Trying to duplicate component (%d) for %s '0x%08x'\n", (int)pComponent->GetType(), pComponent->GetLink()->GetName(), pComponent->GetLink()->GetUID());
         return;
     }
-    _List[compType] = pComponent;
-}
-
-void CEntity::UnsubscribeComponent(iterator& it, bool fEraseFromMap)
-{
-    ADDTOCALLSTACK_INTENSIVE("CEntity::UnsubscribeComponent(it)");
-    delete it->second;
-    if (fEraseFromMap)
-    {
-        it = _List.erase(it);
-    }
+    //_List.container.shrink_to_fit();
 }
 
 void CEntity::UnsubscribeComponent(CComponent *pComponent)
 {
     ADDTOCALLSTACK_INTENSIVE("CEntity::UnsubscribeComponent");
-    if (_List.empty())
+    if (_lComponents.empty())
     {
         return;
     }
-    COMP_TYPE compType = pComponent->GetType();
-    if (_List.end() == _List.find(compType))
+    const COMP_TYPE compType = pComponent->GetType();
+    auto it = _lComponents.find(compType);
+    if (it == _lComponents.end())
     {
         g_Log.EventError("Trying to unsuscribe not suscribed component (%d)\n", (int)pComponent->GetType());    // Should never happen?
         delete pComponent;
         return;
     }
-    _List.erase(compType);  // iterator invalidation!
+    _lComponents.erase(it);  // iterator invalidation!
+    //_List.container.shrink_to_fit();
 }
 
 bool CEntity::IsComponentSubscribed(CComponent *pComponent) const
 {
     ADDTOCALLSTACK_INTENSIVE("CEntity::IsComponentSubscribed");
-    return ( !_List.empty() && (_List.end() != _List.find(pComponent->GetType())) );
+    return ( !_lComponents.empty() && (_lComponents.end() != _lComponents.find(pComponent->GetType())) );
 }
 
 CComponent * CEntity::GetComponent(COMP_TYPE type) const
 {
     ADDTOCALLSTACK_INTENSIVE("CEntity::GetComponent");
-    ASSERT((type >= 0) && (type < COMP_QTY));
-    if (_List.empty())
+    ASSERT(type < COMP_QTY);
+    if (_lComponents.empty())
     {
         return nullptr;
     }
-    auto it = _List.find(type);
-    return (it != _List.end()) ? it->second : nullptr;
+    auto it = _lComponents.find(type);
+    return (it != _lComponents.end()) ? it->second : nullptr;
 }
 
 bool CEntity::r_GetRef(lpctstr & ptcKey, CScriptObj * & pRef)
 {
     ADDTOCALLSTACK_INTENSIVE("CEntity::r_GetRef");
-    if (_List.empty())
+    if (_lComponents.empty())
         return false;
-    for (auto it = _List.begin(), itEnd = _List.end(); it != itEnd; ++it)
+    for (auto it = _lComponents.begin(), itEnd = _lComponents.end(); it != itEnd; ++it)
     {
         CComponent *pComponent = it->second;
         ASSERT(pComponent);
@@ -124,9 +117,9 @@ bool CEntity::r_GetRef(lpctstr & ptcKey, CScriptObj * & pRef)
 void CEntity::r_Write(CScript & s) // Storing data in the worldsave.
 {
     ADDTOCALLSTACK_INTENSIVE("CEntity::r_Write");
-    if (_List.empty() && !s.IsWriteMode())
+    if (_lComponents.empty() && !s.IsWriteMode())
         return;
-    for (auto it = _List.begin(), itEnd = _List.end(); it != itEnd; ++it)
+    for (auto it = _lComponents.begin(), itEnd = _lComponents.end(); it != itEnd; ++it)
     {
         CComponent *pComponent = it->second;
         ASSERT(pComponent);
@@ -137,9 +130,9 @@ void CEntity::r_Write(CScript & s) // Storing data in the worldsave.
 bool CEntity::r_WriteVal(lpctstr ptcKey, CSString & sVal, CTextConsole * pSrc)
 {
     ADDTOCALLSTACK_INTENSIVE("CEntity::r_WriteVal");
-    if (_List.empty())
+    if (_lComponents.empty())
         return false;
-    for (auto it = _List.begin(), itEnd = _List.end(); it != itEnd; ++it)
+    for (auto it = _lComponents.begin(), itEnd = _lComponents.end(); it != itEnd; ++it)
     {
         CComponent *pComponent = it->second;
         ASSERT(pComponent);
@@ -154,9 +147,9 @@ bool CEntity::r_WriteVal(lpctstr ptcKey, CSString & sVal, CTextConsole * pSrc)
 bool CEntity::r_LoadVal(CScript & s)
 {
     ADDTOCALLSTACK_INTENSIVE("CEntity::r_LoadVal");
-    if (_List.empty())
+    if (_lComponents.empty())
         return false;
-    for (auto it = _List.begin(), itEnd = _List.end(); it != itEnd; ++it)
+    for (auto it = _lComponents.begin(), itEnd = _lComponents.end(); it != itEnd; ++it)
     {
         CComponent *pComponent = it->second;
         ASSERT(pComponent);
@@ -171,9 +164,9 @@ bool CEntity::r_LoadVal(CScript & s)
 bool CEntity::r_Verb(CScript & s, CTextConsole * pSrc) // Execute command from script.
 {
     ADDTOCALLSTACK_INTENSIVE("CEntity::r_Verb");
-    if (_List.empty())
+    if (_lComponents.empty())
         return false;
-    for (auto it = _List.begin(), itEnd = _List.end(); it != itEnd; ++it)
+    for (auto it = _lComponents.begin(), itEnd = _lComponents.end(); it != itEnd; ++it)
     {
         CComponent *pComponent = it->second;
         ASSERT(pComponent);
@@ -188,9 +181,9 @@ bool CEntity::r_Verb(CScript & s, CTextConsole * pSrc) // Execute command from s
 void CEntity::Copy(const CEntity *target)
 {
     ADDTOCALLSTACK_INTENSIVE("CEntity::Copy");
-    if (_List.empty())
+    if (_lComponents.empty())
         return;
-    for (auto it = target->_List.begin(), itEnd = target->_List.end(); it != itEnd; ++it)
+    for (auto it = target->_lComponents.begin(), itEnd = target->_lComponents.end(); it != itEnd; ++it)
     {
         CComponent *pTarget = it->second;    // the CComponent to copy from
         ASSERT(pTarget);
@@ -205,15 +198,15 @@ void CEntity::Copy(const CEntity *target)
 CCRET_TYPE CEntity::OnTick()
 {
     ADDTOCALLSTACK("CEntity::OnTick");
-    if (_List.empty())
+    if (_lComponents.empty())
         return CCRET_CONTINUE;
 
-    for (auto it = _List.begin(), itEnd = _List.end(); it != itEnd; ++it)
+    for (auto it = _lComponents.begin(), itEnd = _lComponents.end(); it != itEnd; ++it)
     {
         CComponent *pComponent = it->second;
         ASSERT(pComponent);
         CCRET_TYPE iRet = pComponent->OnTickComponent();
-        if (iRet != CCRET_CONTINUE)   
+        if (iRet != CCRET_CONTINUE)
         {
             return iRet;    // Stop the loop and return whatever return is needed.
         }

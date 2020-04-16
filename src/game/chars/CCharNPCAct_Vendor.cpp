@@ -2,7 +2,7 @@
 
 #include "../../network/receive.h"
 #include "../clients/CClient.h"
-#include "../CWorld.h"
+#include "../CWorldGameTime.h"
 #include "../CPathFinder.h"
 #include "../spheresvr.h"
 #include "../triggers.h"
@@ -41,9 +41,9 @@ bool CChar::NPC_Vendor_Restock(bool bForce, bool bFillStock)
 		return false;
 
 	bool bRestockNow = false;
-    int64 iRestockDelay = 10 * 60 * MSECS_PER_SEC;  // 10 Minutes delay
-
-	if ( !bForce && (g_World.GetTimeDiff(m_pNPC->m_timeRestock) < 0))
+        int64 iRestockDelay = 10 * 60 * MSECS_PER_SEC;  // 10 Minutes delay
+    
+	if ( !bForce && (CWorldGameTime::GetCurrentTime().GetTimeDiff(m_pNPC->m_timeRestock) >= 0))
 	{
         bRestockNow = true; // restock timeout has expired, make it restock again (unless it's declared to do not restock in the bellow lines).
 		CRegionWorld *region = GetRegion();
@@ -51,14 +51,14 @@ bool CChar::NPC_Vendor_Restock(bool bForce, bool bFillStock)
 		{
 			CVarDefCont *vardef = region->m_TagDefs.GetKey("RestockVendors");
 			if( vardef != nullptr )
-                iRestockDelay = vardef->GetValNum() * MSECS_PER_TENTH;  // backwards: it was working on tenths in scripts before, keep it like that and update it to seconds.
+				iRestockDelay = vardef->GetValNum() * MSECS_PER_TENTH;  // backwards: it was working on tenths in scripts before, keep it like that and update it to seconds.
 			if ( region->m_TagDefs.GetKey("NoRestock") != nullptr )
 				bRestockNow = false;
 		}
 		if ( m_TagDefs.GetKey("NoRestock") != nullptr )
 			bRestockNow = false;
 	}
-    int64 iNextRestock = g_World.GetCurrentTime().GetTimeRaw() + iRestockDelay;
+        int64 iNextRestock = CWorldGameTime::GetCurrentTime().GetTimeRaw() + iRestockDelay;
     
 	// At restock the containers are actually emptied
 	if ( bRestockNow )
@@ -69,7 +69,7 @@ bool CChar::NPC_Vendor_Restock(bool bForce, bool bFillStock)
 			if ( !pCont )
 				return false;
 
-			pCont->Clear();
+			pCont->ClearContainer();
 		}
         bFillStock = true;  // force the vendor to restock.
 	}
@@ -108,7 +108,7 @@ bool CChar::NPC_StablePetSelect( CChar * pCharPlayer )
 	// Might have too many pets already ?
 	int iCount = 0;
 	CItemContainer * pBank = GetBank();
-	if ( pBank->GetCount() >= g_Cfg.m_iContainerMaxItems )
+	if ( pBank->GetContentCount() >= g_Cfg.m_iContainerMaxItems )
 	{
 		Speak( g_Cfg.GetDefaultMsg( DEFMSG_NPC_STABLEMASTER_FULL ) );
 		return false;
@@ -161,8 +161,9 @@ bool CChar::NPC_StablePetSelect( CChar * pCharPlayer )
 		}
 	}
 
-	for ( CItem *pItem = pBank->GetContentHead(); pItem != nullptr; pItem = pItem->GetNext() )
+	for (CSObjContRec* pObjRec : *pBank)
 	{
+		CItem* pItem = static_cast<CItem*>(pObjRec);
 		if ( pItem->IsType(IT_FIGURINE) && pItem->m_uidLink == pCharPlayer->GetUID() )
 			++iCount;
 	}
@@ -187,12 +188,14 @@ bool CChar::NPC_StablePetRetrieve( CChar * pCharPlayer )
 	if ( m_pNPC->m_Brain != NPCBRAIN_STABLE )
 		return false;
 
+	CItemContainer* pBank = GetBank();
+	ASSERT(pBank);
+
 	int iCount = 0;
-	CItem *pItemNext = nullptr;
-	for ( CItem *pItem = GetBank()->GetContentHead(); pItem != nullptr; pItem = pItemNext )
+	for (CSObjContRec* pObjRec : pBank->GetIterationSafeCont())
 	{
-		pItemNext = pItem->GetNext();
-		if ( pItem->IsType(IT_FIGURINE) && pItem->m_uidLink == pCharPlayer->GetUID() )
+		CItem* pItem = static_cast<CItem*>(pObjRec);
+		if ( pItem->IsType(IT_FIGURINE) && (pItem->m_uidLink == pCharPlayer->GetUID()) )
 		{
 			if ( !pCharPlayer->Use_Figurine(pItem) )
 			{

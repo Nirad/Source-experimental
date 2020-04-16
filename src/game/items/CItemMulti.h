@@ -6,11 +6,14 @@
 #ifndef _INC_CITEMMULTI_H
 #define _INC_CITEMMULTI_H
 
-#include "CItem.h"
+#include "../parallel_hashmap/btree.h"
 #include "../components/CCMultiMovable.h"
+#include "CItem.h"
+
 
 #define MAX_MULTI_LIST_OBJS 128
 #define MAX_MULTI_CONTENT 1024
+
 
 enum HOUSE_TYPE
 {
@@ -190,7 +193,7 @@ public:
     * @brief Returns the guild linked.
     * @return the guild
     */
-    CUID GetGuild() const;
+    CUID GetGuildStone() const;
 
     // Coowner
     /**
@@ -601,7 +604,7 @@ public:
     /**
     * @brief Moving from current location.
     */
-    virtual void OnMoveFrom();
+    virtual void OnMoveFrom() override;
     /**
     * @brief Speech commands on the multi.
     * @param pszCmd the speech.
@@ -636,13 +639,13 @@ public:
     virtual bool r_WriteVal(lpctstr ptcKey, CSString & sVal, CTextConsole * pSrc = nullptr, bool fNoCallParent = false, bool fNoCallChildren = false) override;
     virtual bool r_LoadVal(CScript & s) override;
     virtual void DupeCopy(const CItem * pItem) override;  // overriding CItem::DupeCopy
-    virtual void Delete(bool fForce = false) override;
+    virtual bool Delete(bool fForce = false) override;
 };
 
 /*
 * Privileges/Access type for multis, mutually exclusive.
 */
-enum HOUSE_PRIV
+enum HOUSE_PRIV : uchar
 {
     HP_NONE,
     HP_OWNER,
@@ -663,11 +666,14 @@ enum HOUSE_PRIV
 class CMultiStorage
 {
 private:
-    std::map<CUID, HOUSE_PRIV> _lHouses;  // List of stored houses.
-    std::map<CUID, HOUSE_PRIV> _lShips;    // List of stored ships.
+    using MultiOwnedCont = phmap::btree_map<CUID, HOUSE_PRIV>;
+    MultiOwnedCont _lHouses;  // List of stored houses.
+    MultiOwnedCont _lShips;   // List of stored ships.
+
     int16 _iHousesTotal;    // Max of houses.
     int16 _iShipsTotal;     // Max of ships.
     CUID _uidSrc;
+
 public:
     CMultiStorage(const CUID& uidSrc);
     virtual ~CMultiStorage();
@@ -786,6 +792,6 @@ public:
     * @brief Writes the houses/ships on the worldsave.
     * @param s The datastream.
     */
-    virtual void r_Write(CScript & s);
+    void r_Write(CScript & s) const;
 };
 #endif // _INC_CITEMMULTI_H

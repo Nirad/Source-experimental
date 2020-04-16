@@ -5,7 +5,6 @@
 #ifndef _INC_CSFILE_H
 #define _INC_CSFILE_H
 
-#include <cstdio>
 #include "CSString.h"
 
 #ifndef _WIN32
@@ -158,7 +157,8 @@ public:     int SeekToEnd();
 	* @param dwLength lenght of the data to write.
 	* @return true is success, false otherwise.
 	*/
-	virtual bool Write( const void * pData, int iLength );
+protected:  virtual bool _Write(const void* pData, int iLength);
+public:	    virtual bool Write (const void* pData, int iLength);
 	///@}
 
     /** @name File name operations:

@@ -15,7 +15,11 @@
 #include "../chars/CChar.h"
 #include "../chars/CCharNPC.h"
 #include "../clients/CClient.h"
+#include "../CSector.h"
+#include "../CServer.h"
 #include "../CWorld.h"
+#include "../CWorldGameTime.h"
+#include "../CWorldMap.h"
 #include "../triggers.h"
 #include "CItem.h"
 #include "CItemCommCrystal.h"
@@ -86,14 +90,34 @@ lpctstr const CItem::sm_szTrigName[ITRIG_QTY+1] =	// static
 /////////////////////////////////////////////////////////////////
 // -CItem
 
+CUID CItem::GetComponentOfMulti() const	// I'm a CMultiComponent of a CMulti
+{
+	if (CVarDefCont* pVarDef = m_TagDefs.GetKey("MultiComponent"))
+		return CUID((dword)pVarDef->GetValNum());
+	return CUID();
+}
+
+CUID CItem::GetLockDownOfMulti() const	// I'm locked down in a CMulti
+{
+	if (CVarDefCont* pVarDef = m_TagDefs.GetKey("MultiLockDown"))
+		return CUID((dword)pVarDef->GetValNum());
+	return CUID();
+}
+
 void CItem::SetComponentOfMulti(const CUID& uidMulti)
 {
-    _uidMultiComponent = uidMulti;
+	if (!uidMulti.IsValidUID())
+		m_TagDefs.DeleteKey("MultiComponent");
+	else
+		m_TagDefs.SetNum("MultiComponent", uidMulti.GetObjUID(), false, false);
 }
 
 void CItem::SetLockDownOfMulti(const CUID& uidMulti)
 {
-    _uidMultiLockDown = uidMulti;
+	if (!uidMulti.IsValidUID())
+		m_TagDefs.DeleteKey("MultiLockDown");
+	else
+		m_TagDefs.SetNum("MultiLockDown", uidMulti.GetObjUID(), false, false);
 }
 
 CItem::CItem( ITEMID_TYPE id, CItemBase * pItemDef ) : CTimedObject(PROFILE_ITEMS), CObjBase( true )
@@ -130,44 +154,25 @@ CItem::CItem( ITEMID_TYPE id, CItemBase * pItemDef ) : CTimedObject(PROFILE_ITEM
     }
     if (CCFaction::CanSubscribe(this))
     {
-        SubscribeComponent(new CCFaction(this));  // Adding it only to equippable items
+        SubscribeComponent(new CCFaction());  // Adding it only to equippable items
     }
     SubscribeComponentProps(new CCPropsItem());
     SubscribeComponentProps(new CCPropsItemChar());
 }
 
-bool CItem::NotifyDelete()
+void CItem::DeleteCleanup(bool fForce)
 {
-	if (( IsTrigUsed(TRIGGER_DESTROY) ) || ( IsTrigUsed(TRIGGER_ITEMDESTROY) ))
+	ADDTOCALLSTACK("CItem::DeleteCleanup");
+
+	// Remove corpse map waypoint on enhanced clients
+	if (IsType(IT_CORPSE) && m_uidLink)
 	{
-		if (CItem::OnTrigger(ITRIG_DESTROY, &g_Serv) == TRIGRET_RET_TRUE)
-			return false;
+		CChar* pChar = m_uidLink.CharFind();
+		if (pChar && pChar->GetClient())
+		{
+			pChar->GetClient()->addMapWaypoint(this, Remove);
+		}
 	}
-
-	return true;
-}
-
-void CItem::Delete(bool bforce)
-{
-	if (( NotifyDelete() == false ) && !bforce)
-		return;
-
-    // Remove corpse map waypoint on enhanced clients
-    if (IsType(IT_CORPSE) && m_uidLink)
-    {
-        CChar *pChar = m_uidLink.CharFind();
-        if (pChar && pChar->GetClient())
-        {
-            pChar->GetClient()->addMapWaypoint(this, Remove);
-        }
-    }
-
-	CObjBase::Delete();
-}
-
-CItem::~CItem()
-{
-	DeletePrepare();	// Must remove early because virtuals will fail in child destructor.
 
 	switch ( m_type )
 	{
@@ -178,29 +183,62 @@ CItem::~CItem()
 				if ( pHorse && pHorse->IsDisconnected() && ! pHorse->m_pPlayer )
 				{
                     pHorse->m_atRidden.m_uidFigurine.InitUID();
-					pHorse->Delete();
+					pHorse->Delete(fForce);
 				}
 			}
 			break;
 		default:
 			break;
 	}
-    if (_uidMultiComponent.IsValidUID())
+
+    if (CUID uidMulti = GetComponentOfMulti())
     {
-        CItemMulti *pMulti = static_cast<CItemMulti*>(_uidMultiComponent.ItemFind());
+        CItemMulti *pMulti = static_cast<CItemMulti*>(uidMulti.ItemFind());
         if (pMulti)
         {
             pMulti->DeleteComponent(GetUID());
         }
     }
-    if (_uidMultiLockDown.IsValidUID())
+    if (CUID uidMulti = GetLockDownOfMulti())
     {
-        CItemMulti *pMulti = static_cast<CItemMulti*>(_uidMultiLockDown.ItemFind());
+        CItemMulti *pMulti = static_cast<CItemMulti*>(uidMulti.ItemFind());
         if (pMulti)
         {
             pMulti->UnlockItem(GetUID());
         }
     }
+}
+
+bool CItem::NotifyDelete()
+{
+	ADDTOCALLSTACK("CItem::NotifyDelete");
+	if ((IsTrigUsed(TRIGGER_DESTROY)) || (IsTrigUsed(TRIGGER_ITEMDESTROY)))
+	{
+		if (CItem::OnTrigger(ITRIG_DESTROY, &g_Serv) == TRIGRET_RET_TRUE)
+			return false;
+	}
+
+	return true;
+}
+
+bool CItem::Delete(bool fForce)
+{
+	ADDTOCALLSTACK("CItem::Delete");
+	if (( NotifyDelete() == false ) && !fForce)
+		return false;
+
+	DeletePrepare();
+	DeleteCleanup(fForce);
+
+	return CObjBase::Delete(fForce);
+}
+
+CItem::~CItem()
+{
+	ADDTOCALLSTACK("CItem::~CItem");
+	DeletePrepare();	// Must remove early because virtuals will fail in child destructor.
+	DeleteCleanup(true);
+	
 	g_Serv.StatDec(SERV_STAT_ITEMS);
 }
 
@@ -704,7 +742,7 @@ char CItem::GetFixZ( CPointMap pt, dword dwBlockFlags )
 {
 	height_t zHeight = CItemBase::GetItemHeight( GetDispID(), &dwBlockFlags );
 	CServerMapBlockState block( dwBlockFlags, pt.m_z, pt.m_z + zHeight, pt.m_z + 2, zHeight );
-	g_World.GetFixPoint( pt, block );
+	CWorldMap::GetFixPoint( pt, block );
 	return block.m_Bottom.m_z;
 }
 
@@ -901,8 +939,9 @@ int CItem::FixWeirdness()
                     {
                         CItemContainer* pTradeCont = dynamic_cast<CItemContainer*>(this);
                         ASSERT(pTradeCont);
-                        for (CItem *pItem = pTradeCont->GetContentHead(); pItem != nullptr; pItem = pItem->GetNext())
-                        {
+						for (CSObjContRec* pObjRec : pTradeCont->GetIterationSafeContReverse())
+						{
+							CItem* pItem = static_cast<CItem*>(pObjRec);
                             pCharCont->ItemBounce(pItem, false);
                         }
                     }
@@ -1290,9 +1329,9 @@ int64 CItem::GetDecayTime() const
             if (m_itCrop.m_Respawn_Sec > 0) // MORE1 override
                 return (m_itCrop.m_Respawn_Sec * MSECS_PER_SEC);
 
-            const int64 iTimeNextNewMoon = g_World.GetNextNewMoon((GetTopPoint().m_map == 1) ? false : true);
+            const int64 iTimeNextNewMoon = CWorldGameTime::GetNextNewMoon((GetTopPoint().m_map == 1) ? false : true);
             const int64 iMinutesDelay = Calc_GetRandLLVal(20) * g_Cfg.m_iGameMinuteLength;
-			return g_World.GetTimeDiff(iTimeNextNewMoon) + iMinutesDelay;
+			return (iTimeNextNewMoon - CWorldGameTime::GetCurrentTime().GetTimeRaw() + iMinutesDelay);
         }
 		case IT_MULTI:
 		case IT_SHIP:
@@ -1330,7 +1369,7 @@ void CItem::SetTimeout( int64 iMsecs )
 		return;
 
 	CItemsList::sm_fNotAMove = true;
-	pSector->MoveItemToSector( this, iMsecs >= 0 );
+	pSector->MoveItemToSector(this);
 	CItemsList::sm_fNotAMove = false;
 	SetUIDContainerFlags(0);
 }
@@ -1452,7 +1491,7 @@ bool CItem::MoveTo(const CPointMap& pt, bool fForceFix) // Put item on the groun
 
 	CSector * pSector = pt.GetSector();
 	ASSERT( pSector );
-	pSector->MoveItemToSector( this, IsTimerSet() );	// This also awakes the item
+	pSector->MoveItemToSector(this);	// This also awakes the item
 
 	// Is this area too complex ?
 	if ( ! g_Serv.IsLoading())
@@ -1481,7 +1520,7 @@ bool CItem::MoveToCheck( const CPointMap & pt, CChar * pCharMover )
 		    ptNewPlace = pt;
         else
         {
-            const CPointMap ptNear = g_World.FindItemTypeNearby(pt, IT_WALL, 0, true, true);
+            const CPointMap ptNear = CWorldMap::FindItemTypeNearby(pt, IT_WALL, 0, true, true);
             if (!ptNear.IsValidPoint())
                 ptNewPlace = pt;
         }
@@ -1799,7 +1838,7 @@ lpctstr CItem::GetNameFull( bool fIdentified ) const
 			{
 				const CItemStone * pStone = dynamic_cast <const CItemStone*>(this);
 				ASSERT(pStone);
-				len += sprintf( pTemp+len, " (pop:%" PRIuSIZE_T ")", pStone->GetCount());
+				len += sprintf( pTemp+len, " (pop:%" PRIuSIZE_T ")", pStone->GetContentCount());
 			}
 			break;
 
@@ -2081,11 +2120,15 @@ word CItem::GetMaxAmount()
 	if ( !IsStackableType() )
 		return 0;
 
-	int64 iMax = GetDefNum("MaxAmount", false);
+	int64 iMax = GetDefNum("MaxAmount", true);
 	if (iMax)
+	{
 		return (word)minimum(iMax, UINT16_MAX);
+	}
 	else
+	{
 		return (word)minimum(g_Cfg.m_iItemsMaxAmount, UINT16_MAX);
+	}
 }
 
 bool CItem::SetMaxAmount(word amount)
@@ -3275,7 +3318,7 @@ bool CItem::r_Verb( CScript & s, CTextConsole * pSrc ) // Execute command from s
 	EXC_TRY("Verb");
 	ASSERT(pSrc);
 
-    if (static_cast<CEntity*>(this)->r_Verb(s, pSrc))
+    if (CEntity::r_Verb(s, pSrc))
     {
         return true;
     }
@@ -3336,8 +3379,8 @@ bool CItem::r_Verb( CScript & s, CTextConsole * pSrc ) // Execute command from s
 				while ( iCount-- )
 				{
 					CItem* pDupe = CItem::CreateDupeItem(this, dynamic_cast<CChar *>(pSrc), true);
-					pDupe->m_iCreatedResScriptIdx = s.m_iResourceFileIndex;
-					pDupe->m_iCreatedResScriptLine = s.m_iLineNum;
+					pDupe->_iCreatedResScriptIdx = s.m_iResourceFileIndex;
+					pDupe->_iCreatedResScriptLine = s.m_iLineNum;
 					pDupe->MoveNearObj(this, 1);
                     if (fNoCont)
                         pDupe->Update();
@@ -3392,7 +3435,7 @@ bool CItem::r_Verb( CScript & s, CTextConsole * pSrc ) // Execute command from s
 
 bool CItem::IsTriggerActive(lpctstr trig) const
 {
-    if (((_iRunningTriggerId == -1) && _sRunningTrigger.IsEmpty()) || (trig == nullptr))
+    if (((_iRunningTriggerId == -1) && _sRunningTrigger.empty()) || (trig == nullptr))
         return false;
     if (_iRunningTriggerId != -1)
     {
@@ -3400,8 +3443,8 @@ bool CItem::IsTriggerActive(lpctstr trig) const
         int iAction = FindTableSorted( trig, CItem::sm_szTrigName, CountOf(CItem::sm_szTrigName)-1 );
         return (_iRunningTriggerId == iAction);
     }
-    ASSERT(!_sRunningTrigger.IsEmpty());
-    return !_sRunningTrigger.CompareNoCase(trig) ? true : false;
+    ASSERT(!_sRunningTrigger.empty());
+    return (strcmpi(_sRunningTrigger.c_str(), trig) == 0);
 }
 
 void CItem::SetTriggerActive(lpctstr trig)
@@ -3409,14 +3452,14 @@ void CItem::SetTriggerActive(lpctstr trig)
     if (trig == nullptr)
     {
         _iRunningTriggerId = -1;
-        _sRunningTrigger.Empty();
+        _sRunningTrigger.clear();
         return;
     }
     int iAction = FindTableSorted( trig, CItem::sm_szTrigName, CountOf(CItem::sm_szTrigName)-1 );
     if (iAction != -1)
     {
-        _iRunningTriggerId = iAction;
-        _sRunningTrigger.Empty();
+        _iRunningTriggerId = (short)iAction;
+        _sRunningTrigger.clear();
         return;
     }
     _sRunningTrigger = trig;
@@ -3483,7 +3526,7 @@ standard_order:
             size_t curEvents = origEvents;
             for (size_t i = 0; i < curEvents; ++i)
             {
-                CResourceLink* pLink = m_OEvents[i];
+                CResourceLink* pLink = m_OEvents[i].GetRef();
                 if (!pLink || !pLink->HasTrigger(iAction))
                     continue;
                 CResourceLock s;
@@ -3507,7 +3550,7 @@ standard_order:
 		EXC_SET_BLOCK("tevents");
 		for ( size_t i = 0; i < pItemDef->m_TEvents.size(); ++i )
 		{
-			CResourceLink * pLink = pItemDef->m_TEvents[i];
+			CResourceLink * pLink = pItemDef->m_TEvents[i].GetRef();
 			ASSERT(pLink);
 			if ( !pLink->HasTrigger(iAction) )
 				continue;
@@ -3523,7 +3566,7 @@ standard_order:
 		EXC_SET_BLOCK("Item triggers - EVENTSITEM");
 		for ( size_t i = 0; i < g_Cfg.m_iEventsItemLink.size(); ++i )
 		{
-			CResourceLink * pLink = g_Cfg.m_iEventsItemLink[i];
+			CResourceLink * pLink = g_Cfg.m_iEventsItemLink[i].GetRef();
 			if ( !pLink || !pLink->HasTrigger(iAction) )
 				continue;
 			CResourceLock s;
@@ -3711,7 +3754,7 @@ bool CItem::SetType(IT_TYPE type, bool fPreCheck)
     }
     else if (!pComp)
     {
-        SubscribeComponent(new CCFaction(this));
+        SubscribeComponent(new CCFaction());
     }
 
 	return true;
@@ -4599,7 +4642,7 @@ int CItem::Armor_GetDefense() const
 	return iVal;
 }
 
-int CItem::Weapon_GetAttack(bool bGetRange) const
+int CItem::Weapon_GetAttack(bool fGetRange) const
 {
 	ADDTOCALLSTACK("CItem::Weapon_GetAttack");
 	// Get the base attack for the weapon plus magic modifiers.
@@ -4608,7 +4651,7 @@ int CItem::Weapon_GetAttack(bool bGetRange) const
 		return 1;
 
 	int iVal = m_attackBase + m_ModAr;
-	if ( bGetRange )
+	if ( fGetRange )
 		iVal += m_attackRange;
 
 	if ( IsSetOF(OF_ScaleDamageByDurability) && m_itArmor.m_wHitsMax > 0 && m_itArmor.m_wHitsCur < m_itArmor.m_wHitsMax )
@@ -4822,7 +4865,7 @@ lpctstr CItem::Use_SpyGlass( CChar * pUser ) const
 	int iVisibility = (int) (BASE_SIGHT + rWeatherSight + rLightSight);
 
 	// Check for the nearest land, only check every 4th square for speed
-	const CUOMapMeter * pMeter = g_World.GetMapMeter( ptCoords ); // Are we at sea?
+	const CUOMapMeter * pMeter = CWorldMap::GetMapMeter( ptCoords ); // Are we at sea?
 	if ( pMeter == nullptr )
 		return pResult;
 
@@ -4842,7 +4885,7 @@ lpctstr CItem::Use_SpyGlass( CChar * pUser ) const
 				for (int y = ptCoords.m_y - iVisibility; y <= (ptCoords.m_y + iVisibility); y += 2)
 				{
 					CPointMap ptCur((word)(x), (word)(y), ptCoords.m_z);
-					pMeter = g_World.GetMapMeter( ptCur );
+					pMeter = CWorldMap::GetMapMeter( ptCur );
 					if ( pMeter == nullptr )
 						continue;
 
@@ -5920,7 +5963,7 @@ bool CItem::OnTick()
 						tchar *pszMsg = Str_GetTemp();
 						CObjBase* pObj = static_cast<CObjBase*>(GetTopLevelObj());
 						ASSERT(pObj);
-						pObj->Speak(Str_FromI(m_itPotion.m_tick, pszMsg, 10), HUE_RED);
+						pObj->Speak(Str_FromI_Fast(m_itPotion.m_tick, pszMsg, STR_TEMPLENGTH, 10), HUE_RED);
 						SetTimeoutS(1);
 					}
 					return true;

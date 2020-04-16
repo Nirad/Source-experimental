@@ -9,7 +9,10 @@
 #include "../chars/CChar.h"
 #include "../components/CCSpawn.h"
 #include "../items/CItemMultiCustom.h"
+#include "../CServer.h"
 #include "../CWorld.h"
+#include "../CWorldGameTime.h"
+#include "../CWorldMap.h"
 #include "../spheresvr.h"
 #include "../triggers.h"
 #include "CParty.h"
@@ -36,8 +39,8 @@ CClient::CClient(CNetState* state)
 	m_pGMPage = nullptr;
 
 	m_timeLogin = 0;
-	m_timeLastEvent = g_World.GetCurrentTime().GetTimeRaw();
-	m_timeLastEventWalk = g_World.GetCurrentTime().GetTimeRaw();
+	m_timeLastEvent = CWorldGameTime::GetCurrentTime().GetTimeRaw();
+	m_timeLastEventWalk = CWorldGameTime::GetCurrentTime().GetTimeRaw();
 	m_timeNextEventWalk = 0;
 
 	m_iWalkStepCount = 0;
@@ -89,7 +92,7 @@ CClient::~CClient()
 	Cmd_GM_PageClear();
 
 	// Clear containers (CTAG and TOOLTIP)
-	m_TagDefs.Empty();
+	m_TagDefs.Clear();
 
 	CAccount * pAccount = GetAccount();
 	if ( pAccount )
@@ -1184,7 +1187,7 @@ bool CClient::r_Verb( CScript & s, CTextConsole * pSrc ) // Execute command from
 					CPointMap pnt = po;
 					pnt.MoveN( DIR_W, 3 );
 					dword dwBlockFlags = m_pChar->GetMoveBlockFlags();
-					pnt.m_z = g_World.GetHeightPoint2( pnt, dwBlockFlags );	// ??? Get Area
+					pnt.m_z = CWorldMap::GetHeightPoint2( pnt, dwBlockFlags );	// ??? Get Area
 					m_pChar->m_dirFace = pnt.GetDir( po, m_pChar->m_dirFace ); // Face the player
 					m_pChar->Spell_Teleport( pnt, true, false );
 				}

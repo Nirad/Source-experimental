@@ -90,7 +90,7 @@ void CDataBase::Close()
 bool CDataBase::query(const char *query, CVarDefMap & mapQueryResult)
 {
 	ADDTOCALLSTACK("CDataBase::query");
-	mapQueryResult.Empty();
+	mapQueryResult.Clear();
 	mapQueryResult.SetNumNew("NUMROWS", 0);
 
 	if ( !isConnected() )
@@ -137,7 +137,7 @@ bool CDataBase::query(const char *query, CVarDefMap & mapQueryResult)
 				char *z = trow[i];
 				if ( !rownum )
 				{
-					mapQueryResult.SetStr(Str_FromI(i, key, 10), true, z);
+					mapQueryResult.SetStr(Str_FromI_Fast(i, key, sizeof(key), 10), true, z);
 					mapQueryResult.SetStr(fields[i].name, true, z);
 				}
 

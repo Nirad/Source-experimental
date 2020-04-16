@@ -5,7 +5,7 @@
 #include "../items/CItemMap.h"
 #include "../components/CCSpawn.h"
 #include "../CLog.h"
-#include "../CWorld.h"
+#include "../CWorldMap.h"
 #include "../triggers.h"
 #include "CClient.h"
 
@@ -617,8 +617,9 @@ void CClient::Cmd_EditItem( CObjBase *pObj, int iSelect )
 	item[0].m_sText.Format("Contents of %s", pObj->GetName());
 
 	uint count = 0;
-	for ( CItem *pItem = pContainer->GetContentHead(); pItem != nullptr; pItem = pItem->GetNext() )
+	for (const CSObjContRec* pObjRec : *pContainer)
 	{
+		const CItem* pItem = static_cast<const CItem*>(pObjRec);
 		++count;
 		m_tmMenu.m_Item[count] = pItem->GetUID();
 		item[count].m_sText = pItem->GetName();
@@ -1237,7 +1238,7 @@ bool CClient::Cmd_Skill_Smith( CItem *pIngots )
 
 	// Select the blacksmith item type.
 	// repair items or make type of items.
-	if ( !g_World.IsItemTypeNear(m_pChar->GetTopPoint(), IT_FORGE, 3, false) )
+	if ( !CWorldMap::IsItemTypeNear(m_pChar->GetTopPoint(), IT_FORGE, 3, false) )
 	{
 		SysMessageDefault(DEFMSG_SMITHING_FORGE);
 		return false;
@@ -1312,8 +1313,9 @@ bool CClient::Cmd_SecureTrade( CChar *pChar, CItem *pItem )
 	}
 
 	// Check if the trade window is already open
-	for ( CItem *pItemCont = m_pChar->GetContentHead(); pItemCont != nullptr; pItemCont = pItemCont->GetNext() )
+	for (CSObjContRec* pObjRec : m_pChar->GetIterationSafeContReverse())
 	{
+		CItem* pItemCont = static_cast<CItem*>(pObjRec);
 		if ( !pItemCont->IsType(IT_EQ_TRADE_WINDOW) )
 			continue;
 

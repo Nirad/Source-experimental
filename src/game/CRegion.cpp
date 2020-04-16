@@ -7,7 +7,9 @@
 #include "../sphere/threads.h"
 #include "chars/CChar.h"
 #include "clients/CClient.h"
-#include "CWorld.h"
+#include "CSector.h"
+#include "CWorldMap.h"
+
 
 //************************************************************************
 // -CTeleport
@@ -110,7 +112,7 @@ bool CRegion::RealizeRegion()
 	ASSERT( m_iLinkedSectors == 0 );
 	for ( int i = 0, iMax = g_MapList.GetSectorQty(m_pt.m_map); i < iMax; ++i )
 	{
-		CSector *pSector = g_World.GetSector(m_pt.m_map, i);
+		CSector *pSector = CWorldMap::GetSector(m_pt.m_map, i);
 
 		if ( pSector && IsOverlapped(pSector->GetRect()) )
 		{
@@ -235,7 +237,7 @@ bool CRegion::MakeRegionDefname()
     }
 
     // Only one, no need for the extra "_"
-    pszDef = Str_FromI(iVar, pszDef);
+    pszDef = Str_FromI_Fast(iVar, pszDef, STR_TEMPLENGTH, 10);
     SetResourceName( pbuf );
     // Assign name
     return true;
@@ -900,9 +902,10 @@ TRIGRET_TYPE CRegion::OnRegionTrigger( CTextConsole * pSrc, RTRIG_TYPE iAction )
 
 	for ( size_t i = 0; i < m_Events.size(); ++i )
 	{
-		CResourceLink * pLink = m_Events[i];
+		CResourceLink * pLink = m_Events[i].GetRef();
 		if ( !pLink || ( pLink->GetResType() != RES_REGIONTYPE ) || !pLink->HasTrigger(iAction) )
 			continue;
+
 		CResourceLock s;
 		if ( pLink->ResourceLock(s) )
 		{
@@ -915,12 +918,14 @@ TRIGRET_TYPE CRegion::OnRegionTrigger( CTextConsole * pSrc, RTRIG_TYPE iAction )
 	//	EVENTSREGION triggers (constant events of regions set from sphere.ini)
 	for ( size_t i = 0; i < g_Cfg.m_pEventsRegionLink.size(); ++i )
 	{
-		CResourceLink * pLink = g_Cfg.m_pEventsRegionLink[i];
+		CResourceLink * pLink = g_Cfg.m_pEventsRegionLink[i].GetRef();
 		if ( !pLink || ( pLink->GetResType() != RES_REGIONTYPE ) || !pLink->HasTrigger(iAction) )
 			continue;
+
 		CResourceLock s;
 		if ( !pLink->ResourceLock(s) )
 			continue;
+
 		iRet = CScriptObj::OnTriggerScript(s, sm_szTrigName[iAction], pSrc);
 		if ( iRet != TRIGRET_RET_FALSE && iRet != TRIGRET_RET_DEFAULT )
 			return iRet;
@@ -1093,7 +1098,7 @@ const CRandGroupDef * CRegionWorld::FindNaturalResource(int type) const
 
 	for ( size_t i = 0; i < m_Events.size(); ++i )
 	{
-		CResourceLink * pLink = m_Events[i];
+		CResourceLink * pLink = m_Events[i].GetRef();
 		if ( !pLink || ( pLink->GetResType() != RES_REGIONTYPE ))
 			continue;
 

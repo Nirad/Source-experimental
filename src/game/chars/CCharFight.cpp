@@ -5,7 +5,8 @@
 #include "../clients/CClient.h"
 #include "../components/CCPropsChar.h"
 #include "../components/CCPropsItemWeapon.h"
-#include "../CWorld.h"
+#include "../CWorldGameTime.h"
+#include "../CWorldMap.h"
 #include "../triggers.h"
 #include "CChar.h"
 #include "CCharNPC.h"
@@ -20,9 +21,13 @@ void CChar::OnNoticeCrime( CChar * pCriminal, CChar * pCharMark )
 	ADDTOCALLSTACK("CChar::OnNoticeCrime");
 	if ( !pCriminal || pCriminal == this || pCriminal == pCharMark || pCriminal->IsPriv(PRIV_GM) || (pCriminal->m_pNPC && pCriminal->GetNPCBrain() == NPCBRAIN_GUARD) )
 		return;
-    NOTO_TYPE iNoto = pCharMark->Noto_GetFlag(pCriminal);
-    if (iNoto == NOTO_CRIMINAL || iNoto == NOTO_EVIL)
-		return;
+
+	if (pCharMark)
+	{
+		const NOTO_TYPE iNoto = pCharMark->Noto_GetFlag(pCriminal);
+		if (iNoto == NOTO_CRIMINAL || iNoto == NOTO_EVIL)
+			return;
+	}
 
 	// Make my owner criminal too (if I have one)
 	/*CChar * pOwner = pCriminal->GetOwner();
@@ -37,7 +42,7 @@ void CChar::OnNoticeCrime( CChar * pCriminal, CChar * pCharMark )
 		{
 			CScriptTriggerArgs Args;
 			Args.m_iN1 = fMakeCriminal;
-			Args.m_pO1 = const_cast<CChar*>(pCharMark);
+			Args.m_pO1 = pCharMark;
 			OnTrigger(CTRIG_SeeCrime, pCriminal, &Args);
             fMakeCriminal = Args.m_iN1 ? true : false;
 		}
@@ -84,6 +89,7 @@ void CChar::OnNoticeCrime( CChar * pCriminal, CChar * pCharMark )
 // I am commiting a crime.
 // Did others see me commit or try to commit the crime.
 //  SkillToSee = NONE = everyone can notice this.
+//	pCharMark = offended char.
 // RETURN:
 //  true = somebody saw me.
 bool CChar::CheckCrimeSeen( SKILL_TYPE SkillToSee, CChar * pCharMark, const CObjBase * pItem, lpctstr pAction )
@@ -108,7 +114,7 @@ bool CChar::CheckCrimeSeen( SKILL_TYPE SkillToSee, CChar * pCharMark, const CObj
 		if ( ! pChar->CanSeeLOS( this, LOS_NB_WINDOWS )) //what if I was standing behind a window when I saw a crime? :)
 			continue;
 
-        bool fYour = ( pCharMark == pChar );
+        const bool fYour = (pCharMark && ( pCharMark == pChar ));
         if (!g_Cfg.Calc_CrimeSeen(this, pChar, SkillToSee, fYour))
             continue;
 		
@@ -147,12 +153,14 @@ bool CChar::CheckCrimeSeen( SKILL_TYPE SkillToSee, CChar * pCharMark, const CObj
 
             if (fYour)
                 pCharMark->Memory_AddObjTypes(this, MEMORY_IRRITATEDBY);
+
             pChar->ObjMessage(z, this);
 		}
 		else
 		{
             fSeen = true;
 			pChar->OnNoticeCrime( this, pCharMark );
+
             pChar->ObjMessage(z, this);
 		}
 	}
@@ -166,7 +174,7 @@ void CChar::CallGuards()
 		return;
 
     // Spam check, not calling this more than once per second, which will cause an excess of calls and checks on crowded areas because of the 2 CWorldSearch.
-	if (g_World.GetTimeDiff(m_timeLastCallGuards + (1 * MSECS_PER_SEC)) > 0)
+	if (CWorldGameTime::GetCurrentTime().GetTimeDiff(m_timeLastCallGuards + (1 * MSECS_PER_SEC)) <= 0)
 		return;
 
 	// We don't have any target yet, let's check everyone nearby
@@ -206,10 +214,10 @@ bool CChar::CallGuards( CChar * pCriminal )
 		return false;
     }
 
-    if (g_World.GetTimeDiff(m_timeLastCallGuards + (25 * MSECS_PER_TENTH)) > 0)	// Spam check
+    if (CWorldGameTime::GetCurrentTime().GetTimeDiff(m_timeLastCallGuards + (25 * MSECS_PER_TENTH)) <= 0)	// Spam check
         return false;
 
-    m_timeLastCallGuards = g_World.GetCurrentTime().GetTimeRaw();
+    m_timeLastCallGuards = CWorldGameTime::GetCurrentTime().GetTimeRaw();
 
 	CChar *pGuard = nullptr;
 	if (m_pNPC && m_pNPC->m_Brain == NPCBRAIN_GUARD)
@@ -406,8 +414,9 @@ int CChar::CalcArmorDefense() const
 	for ( int i = 0; i < ARMOR_QTY; ++i )
 		ArmorRegionMax[i] = 0;
 
-	for ( CItem* pItem=GetContentHead(); pItem!=nullptr; pItem=pItem->GetNext() )
+	for (CSObjContRec* pObjRec : *this)
 	{
+		CItem* pItem = static_cast<CItem*>(pObjRec);
 		int iDefense = pItem->Armor_GetDefense();
 		if ( !iDefense && !pItem->IsType(IT_SPELL) )
 			continue;
@@ -871,24 +880,28 @@ effect_bounce:
 		// A physical blow of some sort.
 		if (uType & (DAMAGE_HIT_BLUNT|DAMAGE_HIT_PIERCE|DAMAGE_HIT_SLASH))
 		{
-			// Check if Reactive Armor will reflect some damage back
-			if ( IsStatFlag(STATF_REACTIVE) && !(uType & DAMAGE_GOD) )
+			// Check if Reactive Armor will reflect some damage back.
+			// Preventing recurrent reflection with DAMAGE_REACTIVE.
+			if ( IsStatFlag(STATF_REACTIVE) && !((uType & DAMAGE_GOD) || (uType & DAMAGE_REACTIVE)) )
 			{
 				if ( GetTopDist3D(pSrc) < 2 )
 				{
-					int iReactiveDamage = iDmg / 5;
-					if ( iReactiveDamage < 1 )
+					CItem* pReactive = LayerFind(LAYER_SPELL_Reactive);
+					int iReactiveDamage = (iDmg * pReactive->m_itSpell.m_PolyStr) / 100;
+					if (iReactiveDamage < 1)
+					{
 						iReactiveDamage = 1;
+					}
 
 					iDmg -= iReactiveDamage;
-					pSrc->OnTakeDamage( iReactiveDamage, this, (DAMAGE_TYPE)(DAMAGE_FIXED), iDmgPhysical, iDmgFire, iDmgCold, iDmgPoison, iDmgEnergy );
+					pSrc->OnTakeDamage( iReactiveDamage, this, (DAMAGE_TYPE)(DAMAGE_FIXED | DAMAGE_REACTIVE), iDmgPhysical, iDmgFire, iDmgCold, iDmgPoison, iDmgEnergy );
 					pSrc->Sound( 0x1F1 );
 					pSrc->Effect( EFFECT_OBJ, ITEMID_FX_CURSE_EFFECT, this, 10, 16 );
 				}
 			}
 		}
 	}
-
+	
 	if (iDmg <= 0)
 		return 0;
 
@@ -935,16 +948,16 @@ effect_bounce:
 
 byte CChar::GetRangeL() const
 {
-    if (_iRange == 0)
+    if (_uiRange == 0)
         return Char_GetDef()->GetRangeL();
-    return (byte)(RANGE_GET_LO(_iRange));
+    return (byte)(RANGE_GET_LO(_uiRange));
 }
 
 byte CChar::GetRangeH() const
 {
-    if (_iRange == 0)
+    if (_uiRange == 0)
         return Char_GetDef()->GetRangeH();
-    return (byte)(RANGE_GET_HI(_iRange));
+    return (byte)(RANGE_GET_HI(_uiRange));
 }
 
 // What sort of weapon am i using?
@@ -1169,7 +1182,6 @@ void CChar::Fight_ClearAll()
 		m_Fight_Targ_UID.InitUID();
 	}
     Attacker_Clear();
-	StatFlag_Clear(STATF_WAR);
 
     m_atFight.m_iWarSwingState = WAR_SWING_EQUIPPING;
     m_atFight.m_iRecoilDelay = 0;
@@ -1237,9 +1249,11 @@ bool CChar::Fight_Attack( CChar *pCharTarg, bool fToldByMaster )
 		return false;
 	}	
 
-	int64 threat = 0;
-	if ( fToldByMaster )
+	int threat = 0;
+	if (fToldByMaster)
+	{
 		threat = ATTACKER_THREAT_TOLDBYMASTER + Attacker_GetHighestThreat();
+	}
 
     CChar *pTarget = pCharTarg;
 	if ( ((IsTrigUsed(TRIGGER_ATTACK)) || (IsTrigUsed(TRIGGER_CHARATTACK))) && m_Fight_Targ_UID != pCharTarg->GetUID() )
@@ -1248,7 +1262,7 @@ bool CChar::Fight_Attack( CChar *pCharTarg, bool fToldByMaster )
 		Args.m_iN1 = threat;
 		if ( OnTrigger(CTRIG_Attack, pTarget, &Args) == TRIGRET_RET_TRUE )
 			return false;
-		threat = Args.m_iN1;
+		threat = (int)Args.m_iN1;
 	}
 
     if (!Attacker_Add(pTarget, threat))
@@ -1269,8 +1283,8 @@ bool CChar::Fight_Attack( CChar *pCharTarg, bool fToldByMaster )
 			GetClient()->addPlayerWarMode();
 	}
 
-	SKILL_TYPE skillWeapon = Fight_GetWeaponSkill();
-	SKILL_TYPE skillActive = Skill_GetActive();
+	const SKILL_TYPE skillWeapon = Fight_GetWeaponSkill();
+	const SKILL_TYPE skillActive = Skill_GetActive();
 
     if ((skillActive == skillWeapon) && (m_Fight_Targ_UID == pCharTarg->GetUID()))	// already attacking this same target using the same skill
     {
@@ -1293,7 +1307,7 @@ bool CChar::Fight_Attack( CChar *pCharTarg, bool fToldByMaster )
         pTarget = NPC_FightFindBestTarget();
     }
 
-	m_Fight_Targ_UID = pTarget ? pTarget->GetUID() : CUID(UID_UNUSED);
+	m_Fight_Targ_UID = pTarget ? pTarget->GetUID() : CUID();
 	Skill_Start(skillWeapon);
 	return true;
 }
@@ -1332,7 +1346,7 @@ void CChar::Fight_HitTry()
         {
             fIH_ShouldInstaHit = (!m_atFight.m_iRecoilDelay && !m_atFight.m_iSwingAnimationDelay);
             Fight_SetDefaultSwingDelays();
-            const int64 iTimeCur = g_World.GetCurrentTime().GetTimeRaw() / MSECS_PER_TENTH;
+            const int64 iTimeCur = CWorldGameTime::GetCurrentTime().GetTimeRaw() / MSECS_PER_TENTH;
             // Time required to perform the previous normal hit, without the InstaHit delay reduction.
             const int64 iIH_LastHitTag_FullHit_Prev = GetKeyNum("LastHit");   // TAG.LastHit is in tenths of second
             // Time required to perform the shortened hit with InstaHit.
@@ -1631,10 +1645,9 @@ WAR_SWING_TYPE CChar::Fight_Hit( CChar * pCharTarg )
     }
 
     const WAR_SWING_TYPE iStageToSuspend = (IsSetCombatFlags(COMBAT_PREHIT) ? WAR_SWING_SWINGING : WAR_SWING_EQUIPPING);
-    if ( IsSetCombatFlags(COMBAT_FIRSTHIT_INSTANT) && (!m_atFight.m_iSwingIgnoreLastHitTag) 
-        && (m_atFight.m_iWarSwingState == iStageToSuspend) )
+    if ( IsSetCombatFlags(COMBAT_FIRSTHIT_INSTANT) && (!m_atFight.m_iSwingIgnoreLastHitTag) && (m_atFight.m_iWarSwingState == iStageToSuspend) )
     {
-        const int64 iTimeDiff = ((g_World.GetCurrentTime().GetTimeRaw() / MSECS_PER_TENTH) - GetKeyNum("LastHit"));
+        const int64 iTimeDiff = ((CWorldGameTime::GetCurrentTime().GetTimeRaw() / MSECS_PER_TENTH) - GetKeyNum("LastHit"));
         if (iTimeDiff < 0)
         {
             return iStageToSuspend;
@@ -1657,7 +1670,7 @@ WAR_SWING_TYPE CChar::Fight_Hit( CChar * pCharTarg )
 		{
 			// Only start the swing this much tenths of second after the char stopped moving.
 			//  (Values changed between expansions. SE:0,25s / AOS:0,5s / pre-AOS:1,0s)
-			if ( m_pClient && ( -(g_World.GetTimeDiff(m_pClient->m_timeLastEventWalk) / MSECS_PER_TENTH) < g_Cfg.m_iCombatArcheryMovementDelay) )
+			if ( m_pClient && ( (CWorldGameTime::GetCurrentTime().GetTimeDiff(m_pClient->m_timeLastEventWalk) / MSECS_PER_TENTH) < g_Cfg.m_iCombatArcheryMovementDelay) )
 				return WAR_SWING_EQUIPPING;
 		}
 
@@ -1723,9 +1736,6 @@ WAR_SWING_TYPE CChar::Fight_Hit( CChar * pCharTarg )
     // Do i have to wait for the recoil time?
     if (m_atFight.m_iWarSwingState == WAR_SWING_EQUIPPING)
     {
-		// calculate the chance at every hit
-		m_Act_Difficulty = g_Cfg.Calc_CombatChanceToHit(this, m_Fight_Targ_UID.CharFind());
-
         m_atFight.m_iSwingAnimation = (int16)GenerateAnimate(ANIM_ATTACK_WEAPON);
 
         if ( IsTrigUsed(TRIGGER_HITTRY) )
@@ -1797,7 +1807,7 @@ WAR_SWING_TYPE CChar::Fight_Hit( CChar * pCharTarg )
 
 		if ( m_pClient && (skill == SKILL_THROWING) )		// throwing weapons also have anim of the weapon returning after throw it
 		{
-			m_pClient->m_timeLastSkillThrowing = g_World.GetCurrentTime().GetTimeRaw();
+			m_pClient->m_timeLastSkillThrowing = CWorldGameTime::GetCurrentTime().GetTimeRaw();
 			m_pClient->m_pSkillThrowingTarg = pCharTarg;
 			m_pClient->m_SkillThrowingAnimID = AnimID;
 			m_pClient->m_SkillThrowingAnimHue = AnimHue;

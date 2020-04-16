@@ -7,7 +7,8 @@
 #include "../CObjBase.h"
 #include "../CContainer.h"
 #include "../CRegion.h"
-#include "../CWorld.h"
+#include "../CServer.h"
+#include "../CWorldMap.h"
 #include "CCChampion.h"
 #include "CCSpawn.h"
 #include <algorithm>
@@ -59,7 +60,7 @@ CCSpawn *CCSpawn::GetBadSpawn(int index)
 
 CCSpawn::CCSpawn(CItem *pLink, bool fIsChampion) : CComponent(COMP_SPAWN), _fIsChampion(fIsChampion)
 {
-    ADDTOCALLSTACK("CCSpawn::CCSpawn");
+    //ADDTOCALLSTACK_INTENSIVE("CCSpawn::CCSpawn");
     _pLink = pLink;
     _iAmount = 1;
     _iPile = 1;
@@ -68,6 +69,7 @@ CCSpawn::CCSpawn(CItem *pLink, bool fIsChampion) : CComponent(COMP_SPAWN), _fIsC
     _iTimeHi = 30;
     _idSpawn.Init();
     _fKillingChildren = false;
+    _fIsBadSpawn = false;
 }
 
 CCSpawn::~CCSpawn()
@@ -1182,20 +1184,3 @@ void CCSpawn::Copy(const CComponent * target)
 
     // Not copying created objects.
 }
-/*
-bool CCSpawn::IsDeleted()
-{
-    ADDTOCALLSTACK("CCSpawn::IsDeleted");
-    return dynamic_cast<CItem*>(this)->IsDeleted();
-}
-
-void CCSpawn::GoAwake()
-{
-    CTimedObject::GoAwake();
-}
-
-void CCSpawn::GoSleep()
-{
-    CTimedObject::GoSleep();
-}
-*/

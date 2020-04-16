@@ -6,19 +6,20 @@
 #ifndef _INC_COBJBASETEMPLATE_H
 #define _INC_COBJBASETEMPLATE_H
 
-#include "sphere_library/CSObjListRec.h"
+#include "sphere_library/CSObjContRec.h"
 #include "sphere_library/CSString.h"
 #include "CRect.h"
 #include "CUID.h"
 
 
-class CObjBaseTemplate : public CSObjListRec
+class CObjBaseTemplate : public CSObjContRec
 {
 	// A dynamic object of some sort.
 private:
 	CUID		m_UID;		// How the server will refer to this. 0 = static item
 	CSString	m_sName;	// unique name for the individual object.
 	CPointMap	m_pt;		// List is sorted by m_z_sort.
+
 protected:
 	void DupeCopy( const CObjBaseTemplate * pObj ); // it's not a virtual, pay attention to the argument of this method!
 
@@ -35,9 +36,6 @@ private:
 	CObjBaseTemplate& operator=(const CObjBaseTemplate& other);
 
 public:
-	CObjBaseTemplate * GetNext() const;
-	CObjBaseTemplate * GetPrev() const;
-
     const CUID& GetUID() const {
 		return m_UID; 
 	}
@@ -62,7 +60,6 @@ public:
 	bool IsValidUID() const {
 		return m_UID.IsValidUID();
 	}
-	bool IsDeleted() const;
 
 	void SetUIDContainerFlags(dword dwFlags) {
 		m_UID.SetObjContainerFlags( dwFlags );
@@ -75,7 +72,7 @@ public:
 	virtual const CObjBaseTemplate * GetTopLevelObj() const = 0;
 	virtual CObjBaseTemplate* GetTopLevelObj() = 0;
 
-	CSector * GetTopSector() const;
+
 	// Location
 
     LAYER_TYPE GetEquipLayer() const {
@@ -100,6 +97,7 @@ public:
 	virtual void SetTopZ( char z );
 	char GetTopZ() const;
 	uchar GetTopMap() const;
+	CSector* GetTopSector() const;
 
 	void SetUnkPoint( const CPointMap & pt );
     inline const CPointMap & GetUnkPoint() const {
@@ -108,7 +106,9 @@ public:
     }
 	char GetUnkZ() const;
 
+
 	// Distance and direction
+
 	int GetTopDist( const CPointMap & pt ) const;
 
 	int GetTopDist( const CObjBaseTemplate * pObj ) const;

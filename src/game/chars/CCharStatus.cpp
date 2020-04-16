@@ -5,7 +5,7 @@
 #include "../components/CCPropsItemWeapon.h"
 #include "../clients/CClient.h"
 #include "../items/CItemMulti.h"
-#include "../CWorld.h"
+#include "../CWorldMap.h"
 #include "../spheresvr.h"
 #include "../triggers.h"
 #include "CChar.h"
@@ -175,8 +175,9 @@ CItem *CChar::GetBackpackItem(ITEMID_TYPE id)
 	CItemContainer *pPack = GetPack();
 	if ( pPack )
 	{
-		for ( CItem *pItem = pPack->GetContentHead(); pItem != nullptr; pItem = pItem->GetNext() )
+		for (CSObjContRec* pObjRec : *pPack)
 		{
+			CItem* pItem = static_cast<CItem*>(pObjRec);
 			if ( pItem->GetID() == id )
 				return pItem;
 		}
@@ -189,8 +190,9 @@ CItem *CChar::LayerFind( LAYER_TYPE layer ) const
 	ADDTOCALLSTACK("CChar::LayerFind");
 	// Find an item i have equipped.
 
-	for ( CItem *pItem = GetContentHead(); pItem != nullptr; pItem = pItem->GetNext() )
+	for (CSObjContRec* pObjRec : *this)
 	{
+		CItem* pItem = static_cast<CItem*>(pObjRec);
 		if ( pItem->GetEquipLayer() == layer )
 			return pItem;
 	}
@@ -200,11 +202,12 @@ CItem *CChar::LayerFind( LAYER_TYPE layer ) const
 TRIGRET_TYPE CChar::OnCharTrigForLayerLoop( CScript &s, CTextConsole *pSrc, CScriptTriggerArgs *pArgs, CSString *pResult, LAYER_TYPE layer )
 {
 	ADDTOCALLSTACK("CChar::OnCharTrigForLayerLoop");
-	CScriptLineContext StartContext = s.GetContext();
+	const CScriptLineContext StartContext = s.GetContext();
 	CScriptLineContext EndContext = StartContext;
 
-	for ( CItem *pItem = GetContentHead(); pItem != nullptr; pItem = pItem->GetNext() )
+	for (CSObjContRec* pObjRec : GetIterationSafeCont())
 	{
+		CItem* pItem = static_cast<CItem*>(pObjRec);
 		if ( pItem->GetEquipLayer() == layer )
 		{
 			TRIGRET_TYPE iRet = pItem->OnTriggerRun(s, TRIGRUN_SECTION_TRUE, pSrc, pArgs, pResult);
@@ -459,11 +462,6 @@ int CChar::GetHealthPercent() const
 	return IMulDiv(Stat_GetVal(STAT_STR), 100, str);
 }
 
-CChar* CChar::GetNext() const
-{
-	return( static_cast <CChar*>( CObjBase::GetNext()) );
-}
-
 const CObjBaseTemplate * CChar::GetTopLevelObj() const
 {
 	// Get the object that has a location in the world. (Ground level)
@@ -484,7 +482,7 @@ bool CChar::IsSwimming() const
 
 	const CPointMap& ptTop = GetTopPoint();
 
-	const CPointMap pt = g_World.FindItemTypeNearby(ptTop, IT_WATER);
+	const CPointMap pt = CWorldMap::FindItemTypeNearby(ptTop, IT_WATER);
 	if ( !pt.IsValidPoint() )
 		return false;
 
@@ -494,7 +492,7 @@ bool CChar::IsSwimming() const
 
 	// Is there a solid surface under us?
 	dword dwBlockFlags = GetMoveBlockFlags();
-	char iSurfaceZ = g_World.GetHeightPoint2(ptTop, dwBlockFlags, true);
+	char iSurfaceZ = CWorldMap::GetHeightPoint2(ptTop, dwBlockFlags, true);
 	if ( (iSurfaceZ == pt.m_z) && (dwBlockFlags & CAN_I_WATER) )
 		return true;
 
@@ -719,13 +717,15 @@ dword CChar::GetMoveBlockFlags(bool fIgnoreGM) const
 byte CChar::GetLightLevel() const
 {
 	ADDTOCALLSTACK("CChar::GetLightLevel");
-	// Get personal light level.
+	// Get personal default light level.
 
 	if ( IsStatFlag(STATF_DEAD|STATF_SLEEPING|STATF_NIGHTSIGHT) || IsPriv(PRIV_DEBUG) )
 		return LIGHT_BRIGHT;
 	if ( (g_Cfg.m_iRacialFlags & RACIALF_ELF_NIGHTSIGHT) && IsElf() )		// elves always have nightsight enabled (Night Sight racial trait)
 		return LIGHT_BRIGHT;
-	return GetTopSector()->GetLight();
+	const CSector* pSector = GetTopSector();
+	ASSERT(pSector);
+	return pSector->GetLight();
 }
 
 CItem *CChar::GetSpellbook(SPELL_TYPE iSpell) const	// Retrieves a spellbook from the magic school given in iSpell
@@ -749,8 +749,9 @@ CItem *CChar::GetSpellbook(SPELL_TYPE iSpell) const	// Retrieves a spellbook fro
 	CItemContainer *pPack = GetPack();
 	if ( pPack )
 	{
-		for ( CItem *pItem = pPack->GetContentHead(); pItem != nullptr; pItem = pItem->GetNext() )
+		for (CSObjContRec* pObjRec : *pPack)
 		{
+			CItem* pItem = static_cast<CItem*>(pObjRec);
 			if ( !pItem->IsTypeSpellbook() )
 				continue;
             // Found a book, let's find each magic school's offsets to search for the desired spell.
@@ -892,8 +893,8 @@ bool CChar::IsOwnedBy( const CChar * pChar, bool fAllowGM ) const
 lpctstr CChar::GetTradeTitle() const // Paperdoll title for character p (2)
 {
 	ADDTOCALLSTACK("CChar::GetTradeTitle");
-	if ( !m_sTitle.IsEmpty() )
-		return m_sTitle;
+	if ( !m_sTitle.empty() )
+		return m_sTitle.c_str();
 
 	tchar *pTemp = Str_GetTemp();
     const CCharBase *pCharDef = Char_GetDef();
@@ -1383,7 +1384,7 @@ IT_TYPE CChar::CanTouchStatic( CPointMap *pPt, ITEMID_TYPE id, const CItem *pIte
 		return IT_JUNK;
 
 	// Is this static really here ?
-	const CServerMapBlock *pMapBlock = g_World.GetMapBlock(*pPt);
+	const CServerMapBlock *pMapBlock = CWorldMap::GetMapBlock(*pPt);
 	if ( !pMapBlock )
 		return IT_JUNK;
 
@@ -1722,7 +1723,7 @@ bool CChar::IsVerticalSpace( const CPointMap& ptDest, bool fForceMount ) const
 
     const height_t iHeightMount = GetHeightMount();
 	CServerMapBlockState block(dwBlockFlags, ptDest.m_z, ptDest.m_z + m_zClimbHeight + iHeightMount, ptDest.m_z + m_zClimbHeight + 2, iHeightMount);
-	g_World.GetHeightPoint(ptDest, block, true);
+	CWorldMap::GetHeightPoint(ptDest, block, true);
 
 	if ( iHeightMount + ptDest.m_z + (fForceMount ? 4 : 0) >= block.m_Top.m_z )		// 4 is the mount height
 		return false;
@@ -1796,7 +1797,7 @@ CRegion *CChar::CheckValidMove( CPointMap &ptDest, dword *pdwBlockFlags, DIR_TYP
 		g_Log.EventWarn("\t\tCServerMapBlockState block( 0%x, %d, %d, %d );ptDest.m_z(%d) m_zClimbHeight(%d).\n",
 					dwBlockFlags, ptDest.m_z, ptDest.m_z + m_zClimbHeight + iHeight, ptDest.m_z + m_zClimbHeight + 2, ptDest.m_z, m_zClimbHeight);
 
-	g_World.GetHeightPoint(ptDest, block, true);
+	CWorldMap::GetHeightPoint(ptDest, block, true);
 
 	// Pass along my results.
 	dwBlockFlags = block.m_Bottom.m_dwBlockFlags;
@@ -1971,7 +1972,7 @@ void CChar::FixClimbHeight()
 	const CPointMap& pt = GetTopPoint();
     const height_t iHeightMount = GetHeightMount();
 	CServerMapBlockState block(CAN_I_CLIMB, pt.m_z, pt.m_z + iHeightMount + 3, pt.m_z + 2, iHeightMount);
-	g_World.GetHeightPoint(pt, block, true);
+	CWorldMap::GetHeightPoint(pt, block, true);
 
 	if ( (block.m_Bottom.m_z == pt.m_z) && (block.m_dwBlockFlags & CAN_I_CLIMB) )	// we are standing on stairs
 		m_zClimbHeight = block.m_zClimbHeight;

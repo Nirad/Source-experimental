@@ -1,4 +1,4 @@
-
+#include "../../common/flat_containers/flat_set.hpp"
 #include "../../common/resource/CResourceLock.h"
 #include "../../common/CException.h"
 #include "../../network/CClientIterator.h"
@@ -13,7 +13,10 @@
 #include "../components/CCPropsItemEquippable.h"
 #include "../components/CCPropsItemWeapon.h"
 #include "../CContainer.h"
+#include "../CServer.h"
 #include "../CWorld.h"
+#include "../CWorldGameTime.h"
+#include "../CWorldMap.h"
 #include "../spheresvr.h"
 #include "../triggers.h"
 #include "CChar.h"
@@ -387,7 +390,7 @@ void CChar::LayerAdd( CItem * pItem, LAYER_TYPE layer )
 // Unequip the item.
 // This may be a delete etc. It can not FAIL !
 // Removing 'Equip beneficts' from this item
-void CChar::OnRemoveObj( CSObjListRec* pObRec )	// Override this = called when removed from list.
+void CChar::OnRemoveObj( CSObjContRec* pObRec )	// Override this = called when removed from list.
 {
 	ADDTOCALLSTACK("CChar::OnRemoveObj");
 	CItem * pItem = static_cast <CItem*>(pObRec);
@@ -579,19 +582,21 @@ void CChar::DropAll( CItemContainer * pCorpse, uint64 iAttr )
 // Pets can be told to "Drop All"
 // drop item that is up in the air as well.
 // pDest       = Container to place items in
-// bLeaveHands = true to leave items in hands; otherwise, false
-void CChar::UnEquipAllItems( CItemContainer * pDest, bool bLeaveHands )
+// fLeaveHands = true to leave items in hands; otherwise, false
+void CChar::UnEquipAllItems( CItemContainer * pDest, bool fLeaveHands )
 {
 	ADDTOCALLSTACK("CChar::UnEquipAllItems");
 
-	if ( GetCount() <= 0 )
+	if ( IsContainerEmpty())
 		return;
-	CItemContainer *pPack = GetPackSafe();
 
-	CItem *pItemNext = nullptr;
-	for ( CItem *pItem = GetContentHead(); pItem != nullptr; pItem = pItemNext )
+	CItemContainer *pPack = GetPackSafe();
+	for (CSObjContRec* pObjRec : GetIterationSafeContReverse())
 	{
-		pItemNext = pItem->GetNext();
+		if (pObjRec->GetParent() != this)
+			continue;
+
+		CItem* pItem = static_cast<CItem*>(pObjRec);
 		LAYER_TYPE layer = pItem->GetEquipLayer();
 
 		switch ( layer )
@@ -627,7 +632,7 @@ void CChar::UnEquipAllItems( CItemContainer * pDest, bool bLeaveHands )
 				break;
 			case LAYER_HAND1:
 			case LAYER_HAND2:
-				if ( bLeaveHands )
+				if ( fLeaveHands )
 					continue;
 				break;
 			default:
@@ -636,6 +641,7 @@ void CChar::UnEquipAllItems( CItemContainer * pDest, bool bLeaveHands )
 					continue;
 				break;
 		}
+
 		if ( pDest && !pItem->IsAttr(ATTR_NEWBIE|ATTR_MOVE_NEVER|ATTR_BLESSED|ATTR_INSURED|ATTR_NODROP|ATTR_NOTRADE) )
 		{
 			// Move item to dest (corpse usually)
@@ -643,7 +649,7 @@ void CChar::UnEquipAllItems( CItemContainer * pDest, bool bLeaveHands )
 			if ( pDest->IsType(IT_CORPSE) )
 			{
 				// Equip layer only matters on a corpse.
-				pItem->SetContainedLayer((byte)(layer));
+				pItem->SetContainedLayer((byte)layer);
 			}
 		}
 		else if ( pPack )
@@ -1613,7 +1619,7 @@ int CChar::ItemPickup(CItem * pItem, word amount)
 	if ( !pItem )
 		return -1;
 
-    CSObjList* pItemParent = pItem->GetParent();
+    CSObjCont* pItemParent = pItem->GetParent();
     const LAYER_TYPE iItemLayer = pItem->GetEquipLayer();
 	if (pItemParent == this && iItemLayer == LAYER_HORSE )
 		return -1;
@@ -1989,7 +1995,7 @@ bool CChar::ItemDrop( CItem * pItem, const CPointMap & pt )
 	{
 		char iItemHeight = pItem->GetHeight();
 		CServerMapBlockState block( CAN_C_WALK, pt.m_z, pt.m_z, pt.m_z, maximum(iItemHeight,1) );
-		//g_World.GetHeightPoint( pt, block, true );
+		//CWorldMap::GetHeightPoint( pt, block, true );
 		//DEBUG_ERR(("Drop: %d / Min: %d / Max: %d\n", pItem->GetFixZ(pt), block.m_Bottom.m_z, block.m_Top.m_z));
 
 		CPointMap ptStack = pt;
@@ -3051,10 +3057,9 @@ bool CChar::Death()
 	}
 
 	// Look through memories of who I was fighting (make sure they knew they where fighting me)
-	CItem *pItemNext = nullptr;
-	for ( CItem *pItem = GetContentHead(); pItem != nullptr; pItem = pItemNext )
+	for (CSObjContRec* pObjRec : GetIterationSafeContReverse())
 	{
-		pItemNext = pItem->GetNext();
+		CItem* pItem = static_cast<CItem*>(pObjRec);
 		if ( pItem->IsType(IT_EQ_TRADE_WINDOW) )
 		{
 			CItemContainer *pCont = dynamic_cast<CItemContainer *>(pItem);
@@ -3067,7 +3072,7 @@ bool CChar::Death()
 
 		// Remove every memory, with some exceptions
 		if ( pItem->IsType(IT_EQ_MEMORY_OBJ) )
-			Memory_ClearTypes( static_cast<CItemMemory *>(pItem), (MEMORY_FIGHT | MEMORY_HARMEDBY));
+			Memory_ClearTypes( static_cast<CItemMemory *>(pItem), (MEMORY_FIGHT | MEMORY_HARMEDBY) );
 	}
 
 	// Give credit for the kill to my attacker(s)
@@ -3239,7 +3244,7 @@ bool CChar::OnFreezeCheck() const
 
 	if ( IsStatFlag(STATF_FREEZE|STATF_STONE) && !IsPriv(PRIV_GM) )
 		return true;
-	if ( GetKeyNum("NoMoveTill") > (g_World.GetCurrentTime().GetTimeRaw() / MSECS_PER_TENTH)) // in tenths of second.
+	if ( GetKeyNum("NoMoveTill") > (CWorldGameTime::GetCurrentTime().GetTimeRaw() / MSECS_PER_TENTH)) // in tenths of second.
 		return true;
 
 	if ( m_pPlayer )
@@ -3285,6 +3290,7 @@ CRegion * CChar::CanMoveWalkTo( CPointMap & ptDst, bool fCheckChars, bool fCheck
 
 	if ( Can(CAN_C_NONMOVER|CAN_C_STATUE) || IsStatFlag(STATF_FREEZE|STATF_STONE) )
 		return nullptr;
+
 	int iWeightLoadPercent = GetWeightLoadPercent(GetTotalWeight());
 	if ( !fCheckOnly )
 	{
@@ -3854,8 +3860,9 @@ bool CChar::MoveToChar(const CPointMap& pt, bool fStanding, bool fCheckLocation,
 	if ( !MoveToRoom(pRoomNew, fAllowReject) )
 		return false;
 
-	CPointMap ptOld(GetTopPoint());
+	const CPointMap ptOld(GetTopPoint());
     SetTopPoint(pt);
+
     bool fSectorChanged = GetTopPoint().GetSector()->MoveCharToSector(this);
 
 	if ( !m_fClimbUpdated || fForceFix )
@@ -3919,7 +3926,7 @@ bool CChar::MoveToValidSpot(DIR_TYPE dir, int iDist, int iDistStart, bool fFromS
 			// Reset Z back to start Z + PLAYER_HEIGHT so we don't climb buildings
 			pt.m_z = startZ;
 			// Set new Z so we don't end up floating or underground
-			pt.m_z = g_World.GetHeightPoint( pt, dwBlockFlags, true );
+			pt.m_z = CWorldMap::GetHeightPoint( pt, dwBlockFlags, true );
 
 			// don't allow characters to pass through walls or other blocked
 			// paths when they're disembarking from a ship
@@ -3990,16 +3997,16 @@ bool CChar::SetPrivLevel(CTextConsole * pSrc, lpctstr pszFlags)
 
 bool CChar::IsTriggerActive(lpctstr trig) const
 {
-    if (((_iRunningTriggerId == -1) && _sRunningTrigger.IsEmpty()) || (trig == nullptr))
+    if (((_iRunningTriggerId == -1) && _sRunningTrigger.empty()) || (trig == nullptr))
         return false;
     if (_iRunningTriggerId != -1)
     {
         ASSERT(_iRunningTriggerId < CTRIG_QTY);
-        int iAction = FindTableSorted( trig, CChar::sm_szTrigName, CountOf(CChar::sm_szTrigName)-1 );
+        const int iAction = FindTableSorted( trig, CChar::sm_szTrigName, CountOf(CChar::sm_szTrigName)-1 );
         return (_iRunningTriggerId == iAction);
     }
-    ASSERT(!_sRunningTrigger.IsEmpty());
-    return !_sRunningTrigger.CompareNoCase(trig) ? true : false;
+    ASSERT(!_sRunningTrigger.empty());
+	return (strcmpi(_sRunningTrigger.c_str(), trig) == 0);
 }
 
 void CChar::SetTriggerActive(lpctstr trig)
@@ -4007,14 +4014,14 @@ void CChar::SetTriggerActive(lpctstr trig)
     if (trig == nullptr)
     {
         _iRunningTriggerId = -1;
-        _sRunningTrigger.Empty();
+        _sRunningTrigger.clear();
         return;
     }
-    int iAction = FindTableSorted( trig, CChar::sm_szTrigName, CountOf(CChar::sm_szTrigName)-1 );
+	const int iAction = FindTableSorted( trig, CChar::sm_szTrigName, CountOf(CChar::sm_szTrigName)-1 );
     if (iAction != -1)
     {
-        _iRunningTriggerId = iAction;
-        _sRunningTrigger.Empty();
+        _iRunningTriggerId = (short)iAction;
+        _sRunningTrigger.clear();
         return;
     }
     _sRunningTrigger = trig;
@@ -4078,19 +4085,23 @@ TRIGRET_TYPE CChar::OnTrigger( lpctstr pszTrigName, CTextConsole * pSrc, CScript
 	//
 	if ( IsTrigUsed(pszTrigName) )
 	{
+		fc::vector_set<const CResourceLink*> executedEvents;
+
         {
             EXC_SET_BLOCK("events");
             size_t origEvents = m_OEvents.size();
             size_t curEvents = origEvents;
             for (size_t i = 0; i < curEvents; ++i) // EVENTS (could be modifyed ingame!)
             {
-                CResourceLink* pLink = m_OEvents[i];
-                if (!pLink || !pLink->HasTrigger(iAction))
+                CResourceLink* pLink = m_OEvents[i].GetRef();
+                if (!pLink || !pLink->HasTrigger(iAction) || (executedEvents.find(pLink) != executedEvents.end()))
                     continue;
+
                 CResourceLock s;
                 if (!pLink->ResourceLock(s))
                     continue;
 
+				executedEvents.emplace(pLink);
                 iRet = CScriptObj::OnTriggerScript(s, pszTrigName, pSrc, pArgs);
                 if (iRet != TRIGRET_RET_FALSE && iRet != TRIGRET_RET_DEFAULT)
                     goto stopandret;
@@ -4110,12 +4121,15 @@ TRIGRET_TYPE CChar::OnTrigger( lpctstr pszTrigName, CTextConsole * pSrc, CScript
 			EXC_SET_BLOCK("NPC triggers"); // TEVENTS (constant events of NPCs)
 			for ( size_t i = 0; i < pCharDef->m_TEvents.size(); ++i )
 			{
-				CResourceLink * pLink = pCharDef->m_TEvents[i];
-				if ( !pLink || !pLink->HasTrigger(iAction) )
+				CResourceLink * pLink = pCharDef->m_TEvents[i].GetRef();
+				if (!pLink || !pLink->HasTrigger(iAction) || (executedEvents.find(pLink) != executedEvents.end()))
 					continue;
+
 				CResourceLock s;
-				if ( !pLink->ResourceLock(s) )
+				if (!pLink->ResourceLock(s))
 					continue;
+
+				executedEvents.emplace(pLink);
 				iRet = CScriptObj::OnTriggerScript(s, pszTrigName, pSrc, pArgs);
 				if ( iRet != TRIGRET_RET_FALSE && iRet != TRIGRET_RET_DEFAULT )
 					goto stopandret;
@@ -4144,12 +4158,15 @@ TRIGRET_TYPE CChar::OnTrigger( lpctstr pszTrigName, CTextConsole * pSrc, CScript
 			EXC_SET_BLOCK("NPC triggers - EVENTSPET"); // EVENTSPET (constant events of NPCs set from sphere.ini)
 			for (size_t i = 0; i < g_Cfg.m_pEventsPetLink.size(); ++i)
 			{
-				CResourceLink * pLink = g_Cfg.m_pEventsPetLink[i];
-				if (!pLink || !pLink->HasTrigger(iAction))
+				CResourceLink * pLink = g_Cfg.m_pEventsPetLink[i].GetRef();
+				if (!pLink || !pLink->HasTrigger(iAction) || (executedEvents.find(pLink) != executedEvents.end()))
 					continue;
+
 				CResourceLock s;
 				if (!pLink->ResourceLock(s))
 					continue;
+
+				executedEvents.emplace(pLink);
 				iRet = CScriptObj::OnTriggerScript(s, pszTrigName, pSrc, pArgs);
 				if (iRet != TRIGRET_RET_FALSE && iRet != TRIGRET_RET_DEFAULT)
 					goto stopandret;
@@ -4163,12 +4180,15 @@ TRIGRET_TYPE CChar::OnTrigger( lpctstr pszTrigName, CTextConsole * pSrc, CScript
 			EXC_SET_BLOCK("chardef triggers - EVENTSPLAYER");
 			for ( size_t i = 0; i < g_Cfg.m_pEventsPlayerLink.size(); ++i )
 			{
-				CResourceLink	*pLink = g_Cfg.m_pEventsPlayerLink[i];
-				if ( !pLink || !pLink->HasTrigger(iAction) )
+				CResourceLink *pLink = g_Cfg.m_pEventsPlayerLink[i].GetRef();
+				if (!pLink || !pLink->HasTrigger(iAction) || (executedEvents.find(pLink) != executedEvents.end()))
 					continue;
+
 				CResourceLock s;
-				if ( !pLink->ResourceLock(s) )
+				if (!pLink->ResourceLock(s))
 					continue;
+
+				executedEvents.emplace(pLink);
 				iRet = CScriptObj::OnTriggerScript(s, pszTrigName, pSrc, pArgs);
 				if ( iRet != TRIGRET_RET_FALSE && iRet != TRIGRET_RET_DEFAULT )
 					goto stopandret;
@@ -4201,7 +4221,8 @@ void CChar::OnTickStatusUpdate()
 	if ( IsClient() )
 		GetClient()->UpdateStats();
 
-	int64 iTimeDiff = - g_World.GetTimeDiff( m_timeLastHitsUpdate );
+	const int64 iTimeCur = CWorldGameTime::GetCurrentTime().GetTimeRaw();
+	int64 iTimeDiff = iTimeCur - _iTimeLastHitsUpdate;
 	if ( g_Cfg.m_iHitsUpdateRate && ( iTimeDiff >= g_Cfg.m_iHitsUpdateRate ) )
 	{
 		if ( m_fStatusUpdate & SU_UPDATE_HITS )
@@ -4210,7 +4231,7 @@ void CChar::OnTickStatusUpdate()
 			UpdateCanSee(cmd, m_pClient);		// send hits update to all nearby clients
 			m_fStatusUpdate &= ~SU_UPDATE_HITS;
 		}
-		m_timeLastHitsUpdate = g_World.GetCurrentTime().GetTimeRaw();
+		_iTimeLastHitsUpdate = iTimeCur;
 	}
 
 	if ( m_fStatusUpdate & SU_UPDATE_MODE )
@@ -4375,8 +4396,10 @@ bool CChar::OnTick()
 bool CChar::OnTickPeriodic()
 {
     EXC_TRY("OnTickPeriodic");
+	const int64 iTimeCur = CWorldGameTime::GetCurrentTime().GetTimeRaw();
+
     ++_iRegenTickCount;
-    _timeNextRegen = g_World.GetCurrentTime().GetTimeRaw() + MSECS_PER_TICK;
+    _iTimeNextRegen = iTimeCur + MSECS_PER_TICK;
     const bool fRegen = (_iRegenTickCount >= TICKS_PER_SEC);
 
     if (fRegen)
@@ -4419,13 +4442,13 @@ bool CChar::OnTickPeriodic()
     {
         CClient* pClient = GetClient();
         // Players have a silly "always run" flag that gets stuck on.
-        if (-(g_World.GetTimeDiff(pClient->m_timeLastEventWalk)) > 2 * MSECS_PER_TENTH)
+        if ( (iTimeCur - pClient->m_timeLastEventWalk) > (2 * MSECS_PER_TENTH) )
         {
             StatFlag_Clear(STATF_FLY);
         }
 
         // Check targeting timeout, if set
-        if ((pClient->m_Targ_Timeout > 0) && (g_World.GetTimeDiff(pClient->m_Targ_Timeout) <= 0))
+        if ((pClient->m_Targ_Timeout > 0) && ((iTimeCur - pClient->m_Targ_Timeout) > 0) )
         {
             pClient->addTargetCancel();
         }

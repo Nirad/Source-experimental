@@ -4,6 +4,7 @@
 #include "../game/chars/CChar.h"
 #include "../game/items/CItemShip.h"
 #include "../game/CWorld.h"
+#include "../game/CWorldGameTime.h"
 #include "../sphere/ProfileTask.h"
 #include "CException.h"
 #include "CRect.h"
@@ -16,8 +17,9 @@
 void CCharsDisconnectList::AddCharDisconnected( CChar * pChar )
 {
     ADDTOCALLSTACK("CCharsDisconnectList::AddCharDisconnected");
+
     pChar->SetUIDContainerFlags(UID_O_DISCONNECT);
-    InsertHead(pChar);
+    CSObjCont::InsertContentTail(pChar);
 }
 
 ////////////////////////////////////////////////////////////////////////
@@ -25,31 +27,25 @@ void CCharsDisconnectList::AddCharDisconnected( CChar * pChar )
 
 CCharsActiveList::CCharsActiveList()
 {
-	m_timeLastClient = 0;
+	m_iTimeLastClient = 0;
 	m_iClients = 0;
 }
 
-void CCharsActiveList::OnRemoveObj( CSObjListRec * pObjRec )
+void CCharsActiveList::OnRemoveObj(CSObjContRec* pObjRec )
 {
 	ADDTOCALLSTACK("CCharsActiveList::OnRemoveObj");
     ASSERT(pObjRec);
 
 	// Override this = called when removed from group.
-	CChar * pChar = dynamic_cast <CChar*>(pObjRec);
-	ASSERT( pChar );
-	if ( pChar->IsClient())
+	CChar * pChar = static_cast<CChar*>(pObjRec);
+	if (pChar->IsClient())
 	{
-        ClientDecrease();
-        m_timeLastClient = g_World.GetCurrentTime().GetTimeRaw();	// mark time in case it's the last client
+		--m_iClients;
+        m_iTimeLastClient = CWorldGameTime::GetCurrentTime().GetTimeRaw();	// mark time in case it's the last client
 	}
 
-	CSObjList::OnRemoveObj(pObjRec);
+	CSObjCont::OnRemoveObj(pObjRec);
 	pChar->SetUIDContainerFlags(UID_O_DISCONNECT);
-}
-
-int CCharsActiveList::GetClientsNumber() const
-{
-	return m_iClients;
 }
 
 void CCharsActiveList::AddCharActive( CChar * pChar )
@@ -57,26 +53,16 @@ void CCharsActiveList::AddCharActive( CChar * pChar )
 	ADDTOCALLSTACK("CCharsActiveList::AddCharActive");
 	ASSERT( pChar );
 	// ASSERT( pChar->m_pt.IsValid());
-	CSObjList::InsertHead(pChar); // this also removes the Char from the old sector
-    // UID_O_DISCONNECT is removed also by SetTopPoint. But the calls are in this order: SetTopPoint, then AddCharActive -> CSObjList::InsertHead(pChar) ->-> OnRemoveObj
+
+	CSObjCont::InsertContentTail(pChar); // this also removes the Char from the old sector
+
+    // UID_O_DISCONNECT is removed also by SetTopPoint. But the calls are in this order: SetTopPoint, then AddCharActive -> CSObjList::InsertContentHead(pChar) ->-> OnRemoveObj
     //  (which sets UID_O_DISCONNECT), then we return in AddCharActive, where we need to manually remove this flag, otherwise we need to call SetTopPoint() here.
     pChar->RemoveUIDFlags(UID_O_DISCONNECT);
-    if ( pChar->IsClient())
+    if (pChar->IsClient())
     {
-        ClientIncrease();
+		++m_iClients;
     }
-}
-
-void CCharsActiveList::ClientIncrease()
-{
-	ADDTOCALLSTACK("CCharsActiveList::ClientIncrease");
-	++m_iClients;
-}
-
-void CCharsActiveList::ClientDecrease()
-{
-	ADDTOCALLSTACK("CCharsActiveList::ClientDecrease");
-	--m_iClients;
 }
 
 //////////////////////////////////////////////////////////////
@@ -84,19 +70,22 @@ void CCharsActiveList::ClientDecrease()
 
 bool CItemsList::sm_fNotAMove = false;
 
-void CItemsList::OnRemoveObj( CSObjListRec * pObRec )
+void CItemsList::OnRemoveObj(CSObjContRec* pObjRec)
 {
 	ADDTOCALLSTACK("CItemsList::OnRemoveObj");
+
 	// Item is picked up off the ground. (may be put right back down though)
-	CItem * pItem = dynamic_cast <CItem*>(pObRec);
-	ASSERT( pItem );
+	CItem * pItem = static_cast<CItem*>(pObjRec);
 
 	if ( ! sm_fNotAMove )
 	{
 		pItem->OnMoveFrom();	// IT_MULTI, IT_SHIP and IT_COMM_CRYSTAL
 	}
 
-	CSObjList::OnRemoveObj(pObRec);
+	//ASSERT(pObjRec->GetParent() == this);
+	CSObjCont::OnRemoveObj(pObjRec);
+	//ASSERT(pObjRec->GetParent() == nullptr);
+
 	pItem->SetUIDContainerFlags(UID_O_DISCONNECT);	// It is no place for the moment.
 }
 
@@ -106,7 +95,11 @@ void CItemsList::AddItemToSector( CItem * pItem )
 	// Add to top level.
 	// Either MoveTo() or SetTimeout is being called.
 	ASSERT( pItem );
-	CSObjList::InsertHead( pItem ); // this also removes the Char from the old sector
+
+	//ASSERT((pItem->GetParent() == nullptr) || (pItem->GetParent() == &g_World.m_ObjNew));
+	CSObjCont::InsertContentTail( pItem ); // this also removes the Char from the old sector
+	//ASSERT(pItem->GetParent() == this);
+
     pItem->RemoveUIDFlags(UID_O_DISCONNECT);
 }
 
@@ -160,7 +153,7 @@ void CSectorBase::SetAdjacentSectors()
       SW        S        SE
     */
 
-    struct _xyDir_s { int x, y; };
+    struct _xyDir_s { short x, y; };
     static constexpr _xyDir_s _xyDir[DIR_QTY]
     {
         {0, -1},    // N
@@ -173,28 +166,18 @@ void CSectorBase::SetAdjacentSectors()
         {-1, -1}    // NW
     };
 
-    int tmpIndex[DIR_QTY] =
-    {
-        tmpIndex[DIR_N]  = -iMaxX,
-        tmpIndex[DIR_NE] = -iMaxX + 1,
-        tmpIndex[DIR_E]  = 1,
-        tmpIndex[DIR_SE] = iMaxX + 1,
-        tmpIndex[DIR_S]  = iMaxX,
-        tmpIndex[DIR_SW] = iMaxX - 1,
-        tmpIndex[DIR_W]  = -1,
-        tmpIndex[DIR_NW] = -iMaxX - 1
-    };
-
-    int index = 0;
     for (int i = 0; i < (int)DIR_QTY; ++i)
     {
         // out of bounds checks
-        if ((_x + _xyDir[i].x < 0) || (_x + _xyDir[i].x >= iMaxX))
-            continue;
-        if ((_y + _xyDir[i].y < 0) || (_y + _xyDir[i].y >= iMaxY))
+		const int iAdjX = _x + _xyDir[i].x;
+        if ((iAdjX < 0) || (iAdjX >= iMaxX))
             continue;
 
-        index = m_index + tmpIndex[i];
+		const int iAdjY = _y + _xyDir[i].y;
+        if ((iAdjY < 0) || (iAdjY >= iMaxY))
+            continue;
+
+		const int index = (iAdjY * iMaxX) + iAdjX;
         
         // This should not happen, because i did the checks above
         //if ((index < 0) || (index > iMaxSectors))
@@ -221,7 +204,7 @@ CSectorBase::CSectorBase() :
 	_x = _y = -1;
 }
 
-void CSectorBase::Init(int index, int map, int x, int y)
+void CSectorBase::Init(int index, uchar map, short x, short y)
 {
 	ADDTOCALLSTACK("CSectorBase::Init");
 	if (!g_MapList.IsMapSupported(map) || !g_MapList.IsInitialized(map))
@@ -255,7 +238,7 @@ bool CSectorBase::IsInDungeon() const
 
 CRegion * CSectorBase::GetRegion( const CPointBase & pt, dword dwType ) const
 {
-	ADDTOCALLSTACK("CSectorBase::GetRegion");
+	ADDTOCALLSTACK_INTENSIVE("CSectorBase::GetRegion");
 	// Does it match the mask of types we care about ?
 	// Assume sorted so that the smallest are first.
 	//
@@ -305,7 +288,7 @@ CRegion * CSectorBase::GetRegion( const CPointBase & pt, dword dwType ) const
 // Balkon: get regions list (to cycle through intercepted house regions)
 size_t CSectorBase::GetRegions( const CPointBase & pt, dword dwType, CRegionLinks *pRLinks ) const
 {
-	ADDTOCALLSTACK("CSectorBase::GetRegions");
+	ADDTOCALLSTACK_INTENSIVE("CSectorBase::GetRegions");
 	size_t iQty = m_RegionLinks.size();
 	for ( size_t i = 0; i < iQty; ++i )
 	{
@@ -455,7 +438,7 @@ CPointMap CSectorBase::GetBasePoint() const
         (short)((m_index % iCols) * iSize),
 		(short)((m_index / iCols) * iSize),
 		0,
-		(uchar)(m_map));
+		m_map);
 	return pt;
 }
 

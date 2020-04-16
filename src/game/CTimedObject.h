@@ -11,11 +11,11 @@
 
 class CTimedObject
 {
-    friend class CWorldTick;
+    friend class CWorldTicker;
 
 private:
     THREAD_CMUTEX_DEF;
-    int64 _timeout;
+    int64 _iTimeout;
     PROFILE_TYPE _profileType;
     bool _fIsSleeping;
 
@@ -23,12 +23,11 @@ private:
     * @brief clears the timeout.
     * Should not be used outside the tick's loop, use SetTimeout(0) instead.
     */
-    virtual void ClearTimeout();
+    inline void ClearTimeout();
 
 public:
     CTimedObject(PROFILE_TYPE profile);
     virtual ~CTimedObject();
-    void Delete();
 
     inline bool IsSleeping() const;
     inline virtual void GoSleep();
@@ -52,12 +51,6 @@ public:
     * @return true if it's deleted.
     */
     virtual bool IsDeleted() const = 0;
-
-    /**
-     * @brief   &lt; Raw timer.
-     * @param   iDelayInMsecs   Zero-based index of the delay in milliseconds.
-     */
-    void SetTimer(int64 iDelayInMsecs);
 
     /**
      * @brief   &lt; Timer.
@@ -123,6 +116,11 @@ public:
 
 /* Inlined methods are defined here */
 
+void CTimedObject::ClearTimeout()
+{
+    _iTimeout = 0;
+}
+
 bool CTimedObject::IsSleeping() const
 {
     return _fIsSleeping;
@@ -135,7 +133,7 @@ void CTimedObject::GoSleep()
 
 bool CTimedObject::IsTimerSet() const
 {
-    return _timeout > 0;
+    return _iTimeout > 0;
 }
 
 bool CTimedObject::IsTimerExpired() const
