@@ -11,24 +11,14 @@
 
 //----------------------------------------------------------------------
 
-void CChar::Stat_AddMod( STAT_TYPE stat, int iVal )
+void CChar::Stat_AddMod( STAT_TYPE i, int iVal )
 {
-	ADDTOCALLSTACK("CChar::Stat_SpellEffect");
-	if ((stat < STAT_STR) || (stat >= STAT_QTY))
-		return;
+	ADDTOCALLSTACK("CChar::Stat_AddMod");
+	ASSERT(i >= 0 && i < STAT_QTY);
+    if (iVal == 0)
+        return;
 
-	m_Stat[stat].m_max = Stat_GetMax(stat) + iVal;
-	m_Stat[stat].m_mod += iVal;
-
-	// Make sure the current value is not higher than new max value
-	if (m_Stat[stat].m_val > m_Stat[stat].m_max)
-		m_Stat[stat].m_val = m_Stat[stat].m_max;
-
-	// Clear MAX* property if it's not needed anymore
-	if (m_Stat[stat].m_max == Stat_GetAdjusted(stat))
-		m_Stat[stat].m_max = 0;
-
-	UpdateStatsFlag();
+    Stat_SetMod(i, Stat_GetMod(i) + iVal);
 }
 
 void CChar::Stat_SetMod( STAT_TYPE i, int iVal )
