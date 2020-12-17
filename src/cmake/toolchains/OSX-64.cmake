@@ -70,6 +70,16 @@ function (toolchain_exe_stuff)
 		TARGET_LINK_LIBRARIES ( spheresvr_debug		mysqlclient rt dl )
 	ENDIF (TARGET spheresvr_debug)
 
+	#-- Set common define macros.
+	
+	add_definitions(-D_64BITS)
+	add_definitions(-DZ_PREFIX)
+	add_definitions(-D_EXCEPTIONS_DEBUG)
+	# _64BITS: 64 bits architecture.
+	# Z_PREFIX: Use the "z_" prefix for the zlib functions
+	# _EXCEPTIONS_DEBUG: Enable advanced exceptions catching. Consumes some more resources, but is very useful for debug
+	#   on a running environment. Also it makes sphere more stable since exceptions are local.
+
 	#-- Set per-build define macros.
 
 	IF (TARGET spheresvr_release)
